@@ -44,7 +44,7 @@ let state = {
   raiders: [],
   floats: [],       // floating damage/resource text
   particles: [],    // smoke
-  nextRaidIn: 500,  // ticks until first raid
+  nextRaidIn: 900,  // ticks until first raid
   usedNames: [],
   placing: null,
   selectedTile: null,
@@ -144,7 +144,7 @@ function addFloat(x, y, text, color) {
 }
 
 function spawnRaid() {
-  const size = 2 + Math.floor(state.day / 10);
+  const size = 1 + Math.floor(state.day / 15);
   log(`⚔ Raiders approaching! (${size} attackers)`);
   for (let i = 0; i < size; i++) {
     // Spawn from a random map edge
@@ -171,8 +171,8 @@ function updateRaiders() {
   state.nextRaidIn--;
   if (state.nextRaidIn <= 0) {
     spawnRaid();
-    // Raids get more frequent as days pass (min 300 ticks)
-    state.nextRaidIn = Math.max(300, 800 - state.day * 10);
+    // Raids get more frequent as days pass (min 500 ticks)
+    state.nextRaidIn = Math.max(500, 1400 - state.day * 10);
   }
 
   state.raiders.forEach(raider => {
