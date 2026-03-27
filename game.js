@@ -48,6 +48,7 @@ let state = {
   usedNames: [],
   placing: null,
   selectedTile: null,
+  selectedColonist: null,
   camera: { x: 0, y: 0 },
   dragging: false,
   dragStart: null,
@@ -255,6 +256,43 @@ function killColonist(id) {
   state.colonists.splice(idx, 1);
   state.population--;
   updateResourceUI();
+}
+
+const ASSIGNABLE = new Set(['farm', 'woodcutter', 'quarry', 'barracks']);
+const MAX_WORKERS = 2;
+
+function assignColonistToBuilding(colonistId, buildingId) {
+  const c = state.colonists.find(col => col.id === colonistId);
+  if (!c) return;
+  // Release from current job
+  if (c.job !== null) {
+    const old = state.buildings[c.job];
+    if (old) old.workers = Math.max(0, old.workers - 1);
+  }
+  if (buildingId === null) {
+    c.job = null;
+    c.path = []; c.pathTarget = null;
+    log(`${c.name} unassigned`);
+  } else {
+    const b = state.buildings[buildingId];
+    if (!b || b.hp <= 0) { log('That building is destroyed'); return; }
+    c.job = buildingId;
+    b.workers++;
+    c.path = []; c.pathTarget = null;
+    log(`${c.name} → ${BUILDINGS[b.type].name}`);
+  }
+}
+
+function showColonistInfo(c) {
+  const b = c.job !== null ? state.buildings[c.job] : null;
+  const jobName = b ? BUILDINGS[b.type].name : 'Unassigned';
+  const isSoldier = b?.type === 'barracks';
+  document.getElementById('info-content').innerHTML =
+    `<b>${c.name}</b>${isSoldier ? ' ⚔' : ''}<br>` +
+    `Job: ${jobName}<br>` +
+    `Hunger: ${Math.floor(c.hunger)}/100<br>` +
+    `HP: ${c.hp}/${c.maxHp}<br><br>` +
+    `<span style="color:#7ec8e3">Click a work building<br>to assign, or open<br>ground to unassign.</span>`;
 }
 
 function updateTowers() {
@@ -1169,6 +1207,14 @@ function drawColonist(c) {
     ctx.beginPath(); ctx.arc(sx - 1.5, sy - 9.5, 0.9, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.arc(sx + 1.5, sy - 9.5, 0.9, 0, Math.PI * 2); ctx.fill();
   }
+  // Selection ring
+  if (state.selectedColonist === c.id) {
+    ctx.strokeStyle = '#ffe066';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(sx, sy - 2, 11, 0, Math.PI * 2);
+    ctx.stroke();
+  }
   // hunger bar (if below 70)
   if (c.hunger < 70) {
     const bw = 14, bh = 2, bx = sx - bw / 2, by = sy - 17;
@@ -1538,10 +1584,54 @@ function initInput() {
 
   canvas.addEventListener('mouseup', e => {
     if (state.dragging && !state.placing) {
-      // If barely moved, treat as click for selection
       const dx = Math.abs(e.clientX + state.camera.x - state.dragStart.x);
       const dy = Math.abs(e.clientY + state.camera.y - state.dragStart.y);
       if (dx < 3 && dy < 3) {
+        const wx = e.offsetX + state.camera.x;
+        const wy = e.offsetY + state.camera.y;
+
+        // 1. Did we click on a colonist?
+        const hitColonist = state.colonists.find(c => {
+          const cdx = c.x - wx, cdy = c.y - wy;
+          return Math.sqrt(cdx * cdx + cdy * cdy) < 12;
+        });
+        if (hitColonist) {
+          state.selectedColonist = hitColonist.id;
+          state.selectedTile = null;
+          showColonistInfo(hitColonist);
+          state.dragging = false;
+          return;
+        }
+
+        // 2. Colonist selected — use click as assignment target
+        if (state.selectedColonist !== null) {
+          const { c, r } = screenToTile(e.offsetX, e.offsetY);
+          const tile = state.tiles[r]?.[c];
+          if (tile && tile.building !== null) {
+            const b = state.buildings[tile.building];
+            if (ASSIGNABLE.has(b.type) && b.hp > 0) {
+              if (b.workers >= MAX_WORKERS) {
+                log(`${BUILDINGS[b.type].name} already has max workers`);
+              } else {
+                assignColonistToBuilding(state.selectedColonist, b.id);
+              }
+            } else {
+              // Clicked non-assignable building — just select the tile
+              state.selectedTile = { r, c };
+              showTileInfo(r, c);
+            }
+          } else {
+            // Clicked open ground — unassign
+            assignColonistToBuilding(state.selectedColonist, null);
+            state.selectedTile = { r, c };
+            showTileInfo(r, c);
+          }
+          state.selectedColonist = null;
+          state.dragging = false;
+          return;
+        }
+
+        // 3. Default: tile selection
         const { c, r } = screenToTile(e.offsetX, e.offsetY);
         state.selectedTile = { r, c };
         showTileInfo(r, c);
@@ -1556,7 +1646,7 @@ function initInput() {
   window.addEventListener('keydown', e => {
     if (e.key === 's' || e.key === 'S') saveGame();
     if (e.key === 'l' || e.key === 'L') loadGame();
-    if (e.key === 'Escape') setPlacing(null);
+    if (e.key === 'Escape') { setPlacing(null); state.selectedColonist = null; }
   });
 
   // Save/load buttons
