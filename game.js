@@ -18,6 +18,7 @@ const BUILDINGS = {
   storehouse:  { name: 'Storehouse',  icon: '📦', cost: { wood: 6, stone: 4 }, storage: 200,      size: 1, maxHp: 80  },
   wall:        { name: 'Wall',        icon: '🧱', cost: { stone: 2 },                              size: 1, maxHp: 300, isBarrier: true },
   tower:       { name: 'Tower',       icon: '🗼', cost: { wood: 4, stone: 8 },                    size: 1, maxHp: 150, attackRange: 5, attackDamage: 12, attackRate: 80 },
+  barracks:    { name: 'Barracks',    icon: '⚔',  cost: { wood: 6, stone: 4 },                    size: 1, maxHp: 120 },
 };
 
 const COLONIST_NAMES = ['Aldric','Berta','Cormac','Dagmar','Edwyn','Freya','Godwin','Hilda','Ivar','Judith','Kelda','Leofric','Marta','Nolan','Oswin','Petra','Rowan','Sigrid','Tobias','Ulf','Vilda','Wulfric','Yrsa','Zora'];
@@ -118,13 +119,14 @@ function spawnColonist() {
     blinkTimer: 0,
     fleeing: false,
     path: [], pathTarget: null, pathCooldown: 0,
+    attackCooldown: 0,
   });
   state.population++;
   updateResourceUI();
 }
 
 function assignJobs() {
-  const productionTypes = new Set(['farm','woodcutter','quarry']);
+  const productionTypes = new Set(['farm','woodcutter','quarry','barracks']);
   const unassigned = state.colonists.filter(c => c.job === null);
   const needsWorker = state.buildings.filter(b => productionTypes.has(b.type) && b.workers < 2 && b.hp > 0);
   unassigned.forEach(c => {
@@ -502,31 +504,79 @@ function tick() {
     return f.life > 0;
   });
 
+  // Colonist combat (self-defence + soldiers)
+  state.colonists.forEach(c => {
+    if (c.attackCooldown > 0) { c.attackCooldown--; return; }
+    const isSoldier = c.job !== null && state.buildings[c.job]?.type === 'barracks';
+    const range    = isSoldier ? TILE * 2.5 : TILE * 1.2;
+    const dmg      = isSoldier ? 8 : 4;
+    const cooldown = isSoldier ? 70 : 110;
+
+    let nearest = null, bestDist = range;
+    state.raiders.forEach(r => {
+      const dx = r.x - c.x, dy = r.y - c.y;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      if (d < bestDist) { bestDist = d; nearest = r; }
+    });
+
+    if (nearest) {
+      nearest.hp -= dmg;
+      addFloat(nearest.x, nearest.y - 16, `-${dmg}`, '#88ddff');
+      c.attackCooldown = cooldown;
+      if (nearest.hp <= 0) {
+        state.raiders = state.raiders.filter(r => r.id !== nearest.id);
+        log(`⚔ ${c.name} slew a raider`);
+      }
+    }
+  });
+
   // Move colonists using A* pathfinding
   state.colonists.forEach(c => {
     const cr2 = Math.floor(ROWS / 2), cc2 = Math.floor(COLS / 2);
     const curR = Math.max(0, Math.min(ROWS - 1, Math.floor(c.y / TILE)));
     const curC = Math.max(0, Math.min(COLS - 1, Math.floor(c.x / TILE)));
 
-    if (c.job === null) {
-      // Wander: pick a new random nearby goal when idle or arrived
-      if (c.pathCooldown <= 0 && c.path.length === 0) {
-        let gr = Math.round(cr2 + (Math.random() - 0.5) * 10);
-        let gc = Math.round(cc2 + (Math.random() - 0.5) * 12);
-        gr = Math.max(0, Math.min(ROWS - 1, gr));
-        gc = Math.max(0, Math.min(COLS - 1, gc));
-        c.pathTarget = { r: gr, c: gc };
-        c.path = astar(curR, curC, gr, gc) || [];
-        c.pathCooldown = 180 + Math.floor(Math.random() * 120);
-      }
-    } else {
-      const b = state.buildings[c.job];
-      if (b) {
-        const gr = b.r, gc = b.c;
-        // Recalculate if job target changed or path exhausted (not at destination)
+    // Soldiers chase nearby raiders
+    const isSoldier = c.job !== null && state.buildings[c.job]?.type === 'barracks';
+    let chasingRaider = false;
+    if (isSoldier && state.raiders.length > 0) {
+      let nearest = null, bestDist = 5 * TILE;
+      state.raiders.forEach(r => {
+        const dx = r.x - c.x, dy = r.y - c.y;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d < bestDist) { bestDist = d; nearest = r; }
+      });
+      if (nearest) {
+        const gr = Math.max(0, Math.min(ROWS - 1, Math.floor(nearest.y / TILE)));
+        const gc = Math.max(0, Math.min(COLS - 1, Math.floor(nearest.x / TILE)));
         if (!c.pathTarget || c.pathTarget.r !== gr || c.pathTarget.c !== gc) {
           c.pathTarget = { r: gr, c: gc };
           c.path = astar(curR, curC, gr, gc) || [];
+        }
+        chasingRaider = true;
+      }
+    }
+
+    if (!chasingRaider) {
+      if (c.job === null) {
+        // Wander: pick a new random nearby goal when idle or arrived
+        if (c.pathCooldown <= 0 && c.path.length === 0) {
+          let gr = Math.round(cr2 + (Math.random() - 0.5) * 10);
+          let gc = Math.round(cc2 + (Math.random() - 0.5) * 12);
+          gr = Math.max(0, Math.min(ROWS - 1, gr));
+          gc = Math.max(0, Math.min(COLS - 1, gc));
+          c.pathTarget = { r: gr, c: gc };
+          c.path = astar(curR, curC, gr, gc) || [];
+          c.pathCooldown = 180 + Math.floor(Math.random() * 120);
+        }
+      } else {
+        const b = state.buildings[c.job];
+        if (b) {
+          const gr = b.r, gc = b.c;
+          if (!c.pathTarget || c.pathTarget.r !== gr || c.pathTarget.c !== gc) {
+            c.pathTarget = { r: gr, c: gc };
+            c.path = astar(curR, curC, gr, gc) || [];
+          }
         }
       }
     }
@@ -1004,6 +1054,46 @@ function drawTower(sx, sy, hp, maxHp) {
   ctx.strokeRect(sx + 5, sy + h*0.28, w - 10, h*0.68);
 }
 
+function drawBarracks(sx, sy) {
+  const w = TILE, h = TILE;
+  // shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.beginPath(); ctx.ellipse(sx + w / 2 + 2, sy + h, w * 0.42, h * 0.09, 0, 0, Math.PI * 2); ctx.fill();
+  // stone floor
+  ctx.fillStyle = '#5a5048';
+  ctx.fillRect(sx + 2, sy + 2, w - 4, h - 4);
+  // walls
+  ctx.fillStyle = '#7a6a58';
+  ctx.fillRect(sx + 3, sy + h * 0.3, w - 6, h * 0.66);
+  ctx.fillStyle = 'rgba(0,0,0,0.15)';
+  ctx.fillRect(sx + w - 11, sy + h * 0.3, 8, h * 0.66);
+  // roof
+  ctx.fillStyle = '#8a3020';
+  ctx.beginPath();
+  ctx.moveTo(sx + 1, sy + h * 0.32);
+  ctx.lineTo(sx + w / 2, sy + h * 0.06);
+  ctx.lineTo(sx + w - 1, sy + h * 0.32);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = '#6a2010'; ctx.lineWidth = 1; ctx.stroke();
+  // door
+  ctx.fillStyle = '#2a180a';
+  ctx.fillRect(sx + w / 2 - 5, sy + h * 0.66, 10, h * 0.3);
+  // crossed swords emblem
+  ctx.strokeStyle = '#d0b840'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(sx + w * 0.32, sy + h * 0.38); ctx.lineTo(sx + w * 0.48, sy + h * 0.6);
+  ctx.moveTo(sx + w * 0.68, sy + h * 0.38); ctx.lineTo(sx + w * 0.52, sy + h * 0.6);
+  ctx.stroke();
+  ctx.strokeStyle = '#d0b840'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(sx + w * 0.32, sy + h * 0.6);  ctx.lineTo(sx + w * 0.48, sy + h * 0.38);
+  ctx.moveTo(sx + w * 0.68, sy + h * 0.6);  ctx.lineTo(sx + w * 0.52, sy + h * 0.38);
+  ctx.stroke();
+  ctx.strokeStyle = '#4a3828'; ctx.lineWidth = 1;
+  ctx.strokeRect(sx + 3, sy + h * 0.3, w - 6, h * 0.66);
+}
+
 // ---- Raider drawing ----
 
 function drawRaider(raider) {
@@ -1086,6 +1176,11 @@ function drawColonist(c) {
     ctx.fillStyle = c.hunger < 30 ? '#e03030' : '#e09020';
     ctx.fillRect(bx, by, bw * (c.hunger / 100), bh);
   }
+  // Soldier badge
+  if (c.job !== null && state.buildings[c.job]?.type === 'barracks') {
+    ctx.font = '8px serif';
+    ctx.fillText('⚔', sx + 3, sy - 13);
+  }
 }
 
 // ---- Main draw ----
@@ -1132,6 +1227,7 @@ function draw() {
       case 'storehouse': drawStorehouse(sx, sy); break;
       case 'wall':       drawWall(sx, sy, b.hp, def.maxHp); break;
       case 'tower':      drawTower(sx, sy, b.hp, def.maxHp); break;
+      case 'barracks':   drawBarracks(sx, sy); break;
     }
     // HP bar on damaged buildings (not wall/tower — they show via colour)
     if (b.hp < def.maxHp && b.hp > 0 && b.type !== 'wall' && b.type !== 'tower') {
