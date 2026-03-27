@@ -49,6 +49,8 @@ let state = {
   placing: null,
   selectedTile: null,
   selectedColonist: null,
+  gameOver: false,
+  wonShown: false,
   camera: { x: 0, y: 0 },
   dragging: false,
   dragStart: null,
@@ -443,9 +445,89 @@ function placeBuilding(r, c, type) {
 // Tick / simulation
 // ============================================================
 const TICKS_PER_DAY = 200;
+
+function depleteTile(b) {
+  const targetType = b.type === 'woodcutter' ? T.FOREST : T.STONE;
+  const radius = 5;
+  let nearest = null, bestDist = Infinity;
+  for (let dr = -radius; dr <= radius; dr++) {
+    for (let dc = -radius; dc <= radius; dc++) {
+      const tr = b.r + dr, tc = b.c + dc;
+      const tile = state.tiles[tr]?.[tc];
+      if (tile && tile.type === targetType && tile.resource > 0 && tile.building === null) {
+        const d = Math.sqrt(dr * dr + dc * dc);
+        if (d < bestDist) { bestDist = d; nearest = { r: tr, c: tc, tile }; }
+      }
+    }
+  }
+  if (!nearest) return;
+  nearest.tile.resource--;
+  if (nearest.tile.resource <= 0) {
+    nearest.tile.type  = targetType === T.FOREST ? T.GRASS : T.DIRT;
+    nearest.tile.resource = 0;
+    log(targetType === T.FOREST ? '🌲 A forest patch cleared' : '⛏ Stone deposit exhausted');
+  }
+}
+
+function regrowTiles() {
+  const DIRS = [[-1,0],[1,0],[0,-1],[0,1]];
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const tile = state.tiles[r][c];
+      if (tile.building !== null) continue;
+      // Partially depleted tiles regrow their resource slowly
+      if (tile.type === T.FOREST && tile.resource < 10 && Math.random() < 0.4)
+        tile.resource++;
+      if (tile.type === T.STONE && tile.resource < 8 && Math.random() < 0.15)
+        tile.resource++;
+      // Bare grass adjacent to forest can regrow into forest (slow)
+      if (tile.type === T.GRASS && Math.random() < 0.08) {
+        if (DIRS.some(([dr, dc]) => state.tiles[r+dr]?.[c+dc]?.type === T.FOREST)) {
+          tile.type = T.FOREST; tile.resource = 3;
+        }
+      }
+      // Dirt adjacent to stone can regrow (very slow)
+      if (tile.type === T.DIRT && Math.random() < 0.03) {
+        if (DIRS.some(([dr, dc]) => state.tiles[r+dr]?.[c+dc]?.type === T.STONE)) {
+          tile.type = T.STONE; tile.resource = 2;
+        }
+      }
+    }
+  }
+}
+
+function checkWinLose() {
+  if (state.gameOver) return;
+  if (state.population === 0 && state.colonists.length === 0 && state.tick > 200) {
+    state.gameOver = true;
+    showOverlay(
+      'Colony Lost',
+      `Your colony survived <b>${state.day}</b> days<br>before the last colonist fell.`,
+      'Try Again', () => location.reload()
+    );
+  }
+  if (!state.wonShown && state.population >= 20) {
+    state.wonShown = true;
+    showOverlay(
+      'Colony Thriving!',
+      `Your settlement has grown to <b>${state.population}</b> souls.<br>The colony is established!`,
+      'Keep Playing', () => { document.getElementById('game-overlay').style.display = 'none'; }
+    );
+  }
+}
+
+function showOverlay(title, body, btnLabel, btnAction) {
+  document.getElementById('overlay-title').textContent = title;
+  document.getElementById('overlay-body').innerHTML = body;
+  const btn = document.getElementById('overlay-btn');
+  btn.textContent = btnLabel;
+  btn.onclick = btnAction;
+  document.getElementById('game-overlay').style.display = 'flex';
+}
 const DAYS_PER_SEASON = 5;
 
 function tick() {
+  if (state.gameOver) return;
   state.tick++;
   const t = state.tick;
 
@@ -483,7 +565,19 @@ function tick() {
     let rate = def.rate * workers;
     if (def.produces === 'food') rate *= FOOD_SEASON_MULT[state.season];
     state.resources[def.produces] = (state.resources[def.produces] || 0) + rate;
+    // Deplete nearby resource tiles (not farms — food is renewable)
+    if (b.type === 'woodcutter' || b.type === 'quarry') {
+      if (!b.depletionAccum) b.depletionAccum = 0;
+      b.depletionAccum += rate;
+      if (b.depletionAccum >= 1) {
+        b.depletionAccum -= 1;
+        depleteTile(b);
+      }
+    }
   });
+
+  // Tile regeneration — every 600 ticks
+  if (t % 600 === 0) regrowTiles();
 
   // Smoke particles from active production buildings
   if (t % 8 === 0) {
@@ -660,6 +754,9 @@ function tick() {
     document.getElementById('season-label').textContent = SEASON_NAMES[state.season];
     document.getElementById('season-label').style.color = SEASON_COLORS[state.season];
   }
+
+  // Win / lose check
+  checkWinLose();
 
   // Cap resources
   state.resources.wood  = Math.max(0, Math.min(9999, state.resources.wood));
