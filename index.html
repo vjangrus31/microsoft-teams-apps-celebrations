@@ -52,6 +52,9 @@
     }
     #season-label { font-weight: 600; font-size: 14px; color: #7ec8e3; }
     #day-label { font-size: 11px; color: #4a6888; margin-top: 2px; }
+    #raid-alert { font-size: 11px; color: #cc4444; margin-top: 4px; font-weight: 600; display: none; }
+    #raid-alert.active { display: block; animation: pulse 0.8s infinite alternate; }
+    @keyframes pulse { from { opacity: 1; } to { opacity: 0.4; } }
 
     #build-panel { border-top: 1px solid #1a2e44; }
     #build-panel h2 { margin-bottom: 0; }
@@ -105,6 +108,7 @@
       <div id="season-info">
         <div id="season-label">Spring</div>
         <div id="day-label">Day 1</div>
+        <div id="raid-alert">⚔ Raiders!</div>
       </div>
 
       <div id="build-panel">
@@ -114,6 +118,8 @@
         <button class="build-btn" data-type="woodcutter"><span class="btn-icon">🪓</span>Woodcutter<span class="cost">3🪵</span></button>
         <button class="build-btn" data-type="quarry"><span class="btn-icon">⛏</span>Quarry<span class="cost">5🪵</span></button>
         <button class="build-btn" data-type="storehouse"><span class="btn-icon">📦</span>Storehouse<span class="cost">6🪵 4🪨</span></button>
+        <button class="build-btn" data-type="wall"><span class="btn-icon">🧱</span>Wall<span class="cost">2🪨</span></button>
+        <button class="build-btn" data-type="tower"><span class="btn-icon">🗼</span>Tower<span class="cost">4🪵 8🪨</span></button>
         <button class="build-btn cancel-btn" data-type="none"><span class="btn-icon">✖</span>Cancel</button>
       </div>
 

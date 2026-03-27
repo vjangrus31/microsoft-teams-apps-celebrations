@@ -11,12 +11,16 @@ const T = { GRASS: 0, FOREST: 1, STONE: 2, WATER: 3, DIRT: 4 };
 
 // Building definitions
 const BUILDINGS = {
-  house:       { name: 'House',       icon: '🏠', color: '#8B6914', cost: { wood: 5, stone: 3 }, housing: 3, size: 1 },
-  farm:        { name: 'Farm',        icon: '🌾', color: '#5a8a20', cost: { wood: 4 },           produces: 'food',  rate: 0.05, size: 2 },
-  woodcutter:  { name: 'Woodcutter',  icon: '🪓', color: '#6B4226', cost: { wood: 3 },           produces: 'wood',  rate: 0.04, size: 1 },
-  quarry:      { name: 'Quarry',      icon: '⛏',  color: '#707070', cost: { wood: 5 },           produces: 'stone', rate: 0.03, size: 1 },
-  storehouse:  { name: 'Storehouse',  icon: '📦', color: '#8B7355', cost: { wood: 6, stone: 4 }, storage: 200,      size: 1 },
+  house:       { name: 'House',       icon: '🏠', cost: { wood: 5, stone: 3 }, housing: 3,  size: 1, maxHp: 100 },
+  farm:        { name: 'Farm',        icon: '🌾', cost: { wood: 4 },           produces: 'food',  rate: 0.05, size: 2, maxHp: 60  },
+  woodcutter:  { name: 'Woodcutter',  icon: '🪓', cost: { wood: 3 },           produces: 'wood',  rate: 0.04, size: 1, maxHp: 60  },
+  quarry:      { name: 'Quarry',      icon: '⛏',  cost: { wood: 5 },           produces: 'stone', rate: 0.03, size: 1, maxHp: 80  },
+  storehouse:  { name: 'Storehouse',  icon: '📦', cost: { wood: 6, stone: 4 }, storage: 200,      size: 1, maxHp: 80  },
+  wall:        { name: 'Wall',        icon: '🧱', cost: { stone: 2 },                              size: 1, maxHp: 300, isBarrier: true },
+  tower:       { name: 'Tower',       icon: '🗼', cost: { wood: 4, stone: 8 },                    size: 1, maxHp: 150, attackRange: 5, attackDamage: 12, attackRate: 80 },
 };
+
+const COLONIST_NAMES = ['Aldric','Berta','Cormac','Dagmar','Edwyn','Freya','Godwin','Hilda','Ivar','Judith','Kelda','Leofric','Marta','Nolan','Oswin','Petra','Rowan','Sigrid','Tobias','Ulf','Vilda','Wulfric','Yrsa','Zora'];
 
 const SEASON_NAMES = ['Spring', 'Summer', 'Autumn', 'Winter'];
 const SEASON_COLORS = ['#4a9a4a', '#3a8a3a', '#b06020', '#b0c8d8'];
@@ -30,13 +34,17 @@ let state = {
   population: 0,
   housing: 0,
   day: 1,
-  tick: 0,           // ticks per day = 200
-  seasonTick: 0,     // season = 5 days
-  season: 0,         // 0-3
+  tick: 0,
+  seasonTick: 0,
+  season: 0,
   tiles: [],
   buildings: [],
   colonists: [],
-  placing: null,     // building type being placed
+  raiders: [],
+  floats: [],       // floating damage/resource text
+  nextRaidIn: 500,  // ticks until first raid
+  usedNames: [],
+  placing: null,
   selectedTile: null,
   camera: { x: 0, y: 0 },
   dragging: false,
@@ -85,30 +93,190 @@ function generateMap() {
 // ============================================================
 // Colonist
 // ============================================================
+function pickName() {
+  const unused = COLONIST_NAMES.filter(n => !state.usedNames.includes(n));
+  const pool = unused.length > 0 ? unused : COLONIST_NAMES;
+  const name = pool[Math.floor(Math.random() * pool.length)];
+  state.usedNames.push(name);
+  return name;
+}
+
 function spawnColonist() {
   const cr = Math.floor(ROWS / 2), cc = Math.floor(COLS / 2);
   state.colonists.push({
     id: state.colonists.length,
+    name: pickName(),
     x: cc * TILE + TILE / 2 + (Math.random() - 0.5) * 40,
     y: cr * TILE + TILE / 2 + (Math.random() - 0.5) * 40,
     tx: null, ty: null,
-    job: null,  // building id
+    job: null,
     hunger: 100,
-    state: 'idle',
+    hp: 30, maxHp: 30,
+    starving: 0,
     color: `hsl(${Math.floor(Math.random() * 360)},60%,70%)`,
     blinkTimer: 0,
+    fleeing: false,
   });
   state.population++;
   updateResourceUI();
 }
 
 function assignJobs() {
-  // Assign unassigned colonists to un-staffed production buildings
+  const productionTypes = new Set(['farm','woodcutter','quarry']);
   const unassigned = state.colonists.filter(c => c.job === null);
-  const needsWorker = state.buildings.filter(b => b.type !== 'house' && b.type !== 'storehouse' && b.workers < 2);
+  const needsWorker = state.buildings.filter(b => productionTypes.has(b.type) && b.workers < 2 && b.hp > 0);
   unassigned.forEach(c => {
     const b = needsWorker.find(b => b.workers < 2);
-    if (b) { c.job = b.id; b.workers++; log(`Colonist assigned to ${BUILDINGS[b.type].name}`); }
+    if (b) { c.job = b.id; b.workers++; log(`${c.name} assigned to ${BUILDINGS[b.type].name}`); }
+  });
+}
+
+// ============================================================
+// Raiders
+// ============================================================
+function addFloat(x, y, text, color) {
+  state.floats.push({ x, y, text, life: 70, maxLife: 70, color: color || '#fff' });
+}
+
+function spawnRaid() {
+  const size = 2 + Math.floor(state.day / 10);
+  log(`⚔ Raiders approaching! (${size} attackers)`);
+  for (let i = 0; i < size; i++) {
+    // Spawn from a random map edge
+    const edge = Math.floor(Math.random() * 4);
+    let r, c;
+    if (edge === 0) { r = 0;        c = Math.floor(Math.random() * COLS); }
+    else if (edge === 1) { r = ROWS-1; c = Math.floor(Math.random() * COLS); }
+    else if (edge === 2) { r = Math.floor(Math.random() * ROWS); c = 0; }
+    else                 { r = Math.floor(Math.random() * ROWS); c = COLS-1; }
+    state.raiders.push({
+      id: Date.now() + i,
+      x: c * TILE + TILE / 2,
+      y: r * TILE + TILE / 2,
+      hp: 30 + Math.floor(state.day / 5) * 5,
+      maxHp: 30 + Math.floor(state.day / 5) * 5,
+      attackCooldown: 0,
+      blinkTimer: Math.floor(Math.random() * 60),
+    });
+  }
+}
+
+function updateRaiders() {
+  // Tick down next raid
+  state.nextRaidIn--;
+  if (state.nextRaidIn <= 0) {
+    spawnRaid();
+    // Raids get more frequent as days pass (min 300 ticks)
+    state.nextRaidIn = Math.max(300, 800 - state.day * 10);
+  }
+
+  state.raiders.forEach(raider => {
+    raider.blinkTimer = (raider.blinkTimer + 1) % 60;
+    if (raider.attackCooldown > 0) raider.attackCooldown--;
+
+    // Find nearest target: colonist or non-wall building
+    let nearestDist = Infinity, nearestX = null, nearestY = null, nearestColonist = null, nearestBuilding = null;
+
+    state.colonists.forEach(c => {
+      const dx = c.x - raider.x, dy = c.y - raider.y;
+      const d = Math.sqrt(dx*dx + dy*dy);
+      if (d < nearestDist) { nearestDist = d; nearestX = c.x; nearestY = c.y; nearestColonist = c; nearestBuilding = null; }
+    });
+
+    state.buildings.filter(b => b.type !== 'wall' && b.hp > 0).forEach(b => {
+      const bx = (b.c + 0.5) * TILE, by = (b.r + 0.5) * TILE;
+      const dx = bx - raider.x, dy = by - raider.y;
+      const d = Math.sqrt(dx*dx + dy*dy);
+      if (d < nearestDist) { nearestDist = d; nearestX = bx; nearestY = by; nearestColonist = null; nearestBuilding = b; }
+    });
+
+    if (nearestX === null) return; // nothing to attack
+
+    const attackRange = TILE * 0.9;
+    if (nearestDist > attackRange) {
+      // Move toward target, avoid walls
+      const dx = nearestX - raider.x, dy = nearestY - raider.y;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      const speed = 0.7;
+      const nx = raider.x + (dx/dist) * speed;
+      const ny = raider.y + (dy/dist) * speed;
+      // Check if new position is in a wall tile
+      const tc = Math.floor(nx / TILE), tr = Math.floor(ny / TILE);
+      const tile = state.tiles[tr]?.[tc];
+      if (tile && tile.building !== null) {
+        const b = state.buildings[tile.building];
+        if (b && BUILDINGS[b.type].isBarrier) {
+          // Slide along wall — try x or y separately
+          const nx2 = raider.x + (dx/dist) * speed;
+          const tc2 = Math.floor(nx2 / TILE), tr2 = Math.floor(raider.y / TILE);
+          const tile2 = state.tiles[tr2]?.[tc2];
+          if (!tile2 || tile2.building === null || !BUILDINGS[state.buildings[tile2.building]?.type]?.isBarrier) {
+            raider.x = nx2;
+          } else {
+            raider.y = raider.y + (dy/dist) * speed;
+          }
+          return;
+        }
+      }
+      raider.x = nx; raider.y = ny;
+    } else if (raider.attackCooldown === 0) {
+      // Attack
+      raider.attackCooldown = 60;
+      if (nearestColonist) {
+        nearestColonist.hp -= 10;
+        addFloat(nearestColonist.x, nearestColonist.y - 16, '-10', '#ff4444');
+        if (nearestColonist.hp <= 0) killColonist(nearestColonist.id);
+      } else if (nearestBuilding) {
+        nearestBuilding.hp -= 15;
+        addFloat(nearestX, nearestY - 20, '-15', '#ff6644');
+        if (nearestBuilding.hp <= 0) {
+          log(`⚠ ${BUILDINGS[nearestBuilding.type].name} destroyed!`);
+          nearestBuilding.hp = 0;
+        }
+      }
+    }
+  });
+}
+
+function killColonist(id) {
+  const idx = state.colonists.findIndex(c => c.id === id);
+  if (idx === -1) return;
+  const c = state.colonists[idx];
+  // Free job slot
+  if (c.job !== null) {
+    const b = state.buildings[c.job];
+    if (b) b.workers = Math.max(0, b.workers - 1);
+  }
+  log(`💀 ${c.name} has died`);
+  state.colonists.splice(idx, 1);
+  state.population--;
+  updateResourceUI();
+}
+
+function updateTowers() {
+  state.buildings.filter(b => b.type === 'tower' && b.hp > 0).forEach(b => {
+    if (!b.attackTimer) b.attackTimer = 0;
+    b.attackTimer++;
+    const def = BUILDINGS.tower;
+    if (b.attackTimer < def.attackRate) return;
+    b.attackTimer = 0;
+    const bx = (b.c + 0.5) * TILE, by = (b.r + 0.5) * TILE;
+    const range = def.attackRange * TILE;
+    // Find nearest raider in range
+    let target = null, bestDist = range;
+    state.raiders.forEach(r => {
+      const dx = r.x - bx, dy = r.y - by;
+      const d = Math.sqrt(dx*dx + dy*dy);
+      if (d < bestDist) { bestDist = d; target = r; }
+    });
+    if (target) {
+      target.hp -= def.attackDamage;
+      addFloat(target.x, target.y - 16, `-${def.attackDamage}`, '#ffdd44');
+      if (target.hp <= 0) {
+        state.raiders = state.raiders.filter(r => r.id !== target.id);
+        log('⚔ Raider slain by tower');
+      }
+    }
   });
 }
 
@@ -138,7 +306,8 @@ function placeBuilding(r, c, type) {
   for (const [k, v] of Object.entries(def.cost || {})) res[k] -= v;
 
   const id = state.buildings.length;
-  const b = { id, type, r, c, workers: 0, progress: 0, active: true };
+  const def2 = BUILDINGS[type];
+  const b = { id, type, r, c, workers: 0, progress: 0, active: true, hp: def2.maxHp, attackTimer: 0 };
   state.buildings.push(b);
 
   // Mark tiles
@@ -183,20 +352,37 @@ function tick() {
     state.resources[def.produces] = (state.resources[def.produces] || 0) + rate;
   });
 
-  // Hunger / food consumption
+  // Hunger / food consumption + starvation deaths
   if (t % 20 === 0) {
+    const toKill = [];
     state.colonists.forEach(c => {
       c.hunger -= 2;
       if (c.hunger <= 0) {
         c.hunger = 0;
-        // Try to eat from storehouse
         if (state.resources.food >= 1) {
           state.resources.food -= 1;
           c.hunger = Math.min(100, c.hunger + 30);
+        } else {
+          c.starving = (c.starving || 0) + 1;
+          if (c.starving >= 8) toKill.push(c.id); // ~8 hunger ticks with no food
         }
+      } else {
+        c.starving = 0;
       }
     });
+    toKill.forEach(id => killColonist(id));
   }
+
+  // Raiders & towers
+  updateRaiders();
+  updateTowers();
+
+  // Update floats
+  state.floats = state.floats.filter(f => {
+    f.y -= 0.6;
+    f.life--;
+    return f.life > 0;
+  });
 
   // Move colonists towards their job building
   state.colonists.forEach(c => {
@@ -610,6 +796,87 @@ function drawStorehouse(sx, sy) {
   ctx.font = '11px serif'; ctx.fillText('📦', sx + w * 0.32, sy + h * 0.52);
 }
 
+// ---- Wall & Tower drawing ----
+
+function drawWall(sx, sy, hp, maxHp) {
+  const dmg = hp / maxHp;
+  ctx.fillStyle = dmg > 0.5 ? '#8a8278' : '#6a6258';
+  ctx.fillRect(sx + 1, sy + 1, TILE - 2, TILE - 2);
+  // battlements
+  ctx.fillStyle = dmg > 0.5 ? '#9a9288' : '#7a7268';
+  for (let i = 0; i < 3; i++) ctx.fillRect(sx + 4 + i * 12, sy + 2, 8, 7);
+  // arrow slot
+  ctx.fillStyle = '#2a2218';
+  ctx.fillRect(sx + TILE/2 - 2, sy + 14, 4, 10);
+  ctx.strokeStyle = '#4a4038'; ctx.lineWidth = 1;
+  ctx.strokeRect(sx + 1, sy + 1, TILE - 2, TILE - 2);
+  // damage cracks
+  if (dmg < 0.6) {
+    ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(sx+8,sy+10); ctx.lineTo(sx+15,sy+25); ctx.stroke();
+  }
+}
+
+function drawTower(sx, sy, hp, maxHp) {
+  const w = TILE, h = TILE;
+  const dmg = hp / maxHp;
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.beginPath(); ctx.ellipse(sx+w/2+3, sy+h, w*0.38, h*0.09, 0, 0, Math.PI*2); ctx.fill();
+  // body
+  ctx.fillStyle = dmg > 0.5 ? '#8a8078' : '#6a6058';
+  ctx.fillRect(sx + 5, sy + h*0.28, w - 10, h*0.68);
+  ctx.fillStyle = 'rgba(0,0,0,0.12)';
+  ctx.fillRect(sx + w - 12, sy + h*0.28, 7, h*0.68);
+  // battlements
+  ctx.fillStyle = dmg > 0.5 ? '#9a9088' : '#7a7068';
+  for (let i = 0; i < 3; i++) ctx.fillRect(sx + 6 + i * 11, sy + h*0.26, 7, 8);
+  // arrow slit
+  ctx.fillStyle = '#1a1410';
+  ctx.fillRect(sx + w/2 - 2, sy + h*0.48, 4, 10);
+  // door
+  ctx.fillStyle = '#3a2810';
+  ctx.fillRect(sx + w/2 - 4, sy + h - 10, 8, 10);
+  ctx.strokeStyle = '#4a3828'; ctx.lineWidth = 1;
+  ctx.strokeRect(sx + 5, sy + h*0.28, w - 10, h*0.68);
+}
+
+// ---- Raider drawing ----
+
+function drawRaider(raider) {
+  const { x: sx, y: sy } = worldToScreen(raider.x, raider.y);
+  // shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  ctx.beginPath(); ctx.ellipse(sx, sy+8, 6, 2.5, 0, 0, Math.PI*2); ctx.fill();
+  // legs
+  ctx.strokeStyle = '#6a1818'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(sx-2, sy+2); ctx.lineTo(sx-3, sy+8);
+  ctx.moveTo(sx+2, sy+2); ctx.lineTo(sx+3, sy+8);
+  ctx.stroke();
+  // body (dark armour)
+  ctx.fillStyle = '#4a1a1a';
+  ctx.beginPath();
+  ctx.roundRect ? ctx.roundRect(sx-4, sy-5, 8, 8, 1) : ctx.rect(sx-4, sy-5, 8, 8);
+  ctx.fill();
+  // head
+  ctx.fillStyle = '#c06040';
+  ctx.beginPath(); ctx.arc(sx, sy-9, 4.5, 0, Math.PI*2); ctx.fill();
+  // helmet
+  ctx.fillStyle = '#333';
+  ctx.beginPath(); ctx.arc(sx, sy-11, 4, Math.PI, Math.PI*2); ctx.fill();
+  ctx.fillRect(sx-5, sy-12, 10, 3);
+  // red eyes
+  if (raider.blinkTimer < 52) {
+    ctx.fillStyle = '#ff3333';
+    ctx.beginPath(); ctx.arc(sx-1.5, sy-9.5, 1, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(sx+1.5, sy-9.5, 1, 0, Math.PI*2); ctx.fill();
+  }
+  // HP bar
+  const bw = 14, bh = 2, bx = sx-bw/2, by = sy-18;
+  ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(bx-1, by-1, bw+2, bh+2);
+  ctx.fillStyle = '#dd2222'; ctx.fillRect(bx, by, bw*(raider.hp/raider.maxHp), bh);
+}
+
 // ---- Colonist drawing ----
 
 function drawColonist(c) {
@@ -691,6 +958,7 @@ function draw() {
   state.buildings.forEach(b => {
     const sx = b.c * TILE - state.camera.x;
     const sy = b.r * TILE - state.camera.y;
+    const def = BUILDINGS[b.type];
     ctx.save();
     switch (b.type) {
       case 'house':      drawHouse(sx, sy); break;
@@ -698,6 +966,21 @@ function draw() {
       case 'woodcutter': drawWoodcutter(sx, sy); break;
       case 'quarry':     drawQuarry(sx, sy); break;
       case 'storehouse': drawStorehouse(sx, sy); break;
+      case 'wall':       drawWall(sx, sy, b.hp, def.maxHp); break;
+      case 'tower':      drawTower(sx, sy, b.hp, def.maxHp); break;
+    }
+    // HP bar on damaged buildings (not wall/tower — they show via colour)
+    if (b.hp < def.maxHp && b.hp > 0 && b.type !== 'wall' && b.type !== 'tower') {
+      const bw = def.size * TILE - 4;
+      ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(sx+2, sy+2, bw, 3);
+      ctx.fillStyle = b.hp/def.maxHp > 0.5 ? '#88dd44' : b.hp/def.maxHp > 0.25 ? '#ddaa22' : '#dd3322';
+      ctx.fillRect(sx+2, sy+2, bw * (b.hp/def.maxHp), 3);
+    }
+    // Destroyed overlay
+    if (b.hp <= 0) {
+      ctx.fillStyle = 'rgba(60,20,10,0.55)';
+      ctx.fillRect(sx, sy, def.size*TILE, def.size*TILE);
+      ctx.font = '18px serif'; ctx.fillText('🔥', sx+4, sy+22);
     }
     ctx.restore();
   });
@@ -705,6 +988,26 @@ function draw() {
   // Colonists
   ctx.save();
   state.colonists.forEach(drawColonist);
+  ctx.restore();
+
+  // Raiders
+  ctx.save();
+  state.raiders.forEach(drawRaider);
+  ctx.restore();
+
+  // Floating text
+  ctx.save();
+  state.floats.forEach(f => {
+    const alpha = f.life / f.maxLife;
+    ctx.globalAlpha = alpha;
+    ctx.font = 'bold 11px Inter, sans-serif';
+    ctx.fillStyle = f.color;
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 2;
+    const { x: sx, y: sy } = worldToScreen(f.x, f.y);
+    ctx.strokeText(f.text, sx - ctx.measureText(f.text).width/2, sy);
+    ctx.fillText(f.text,   sx - ctx.measureText(f.text).width/2, sy);
+  });
+  ctx.globalAlpha = 1;
   ctx.restore();
 
   // Placement ghost
@@ -752,6 +1055,8 @@ function updateResourceUI() {
   document.getElementById('res-food').textContent  = Math.floor(state.resources.food);
   document.getElementById('res-pop').textContent   = state.population;
   document.getElementById('res-housing').textContent = state.housing;
+  const raidEl = document.getElementById('raid-alert');
+  if (raidEl) raidEl.classList.toggle('active', state.raiders.length > 0);
 }
 
 const logLines = [];
@@ -772,7 +1077,8 @@ function showTileInfo(r, c) {
     const b = state.buildings[tile.building];
     const def = BUILDINGS[b.type];
     html += `<br><b>${def.name}</b><br>`;
-    html += `Workers: ${b.workers}<br>`;
+    html += `HP: ${b.hp}/${def.maxHp}<br>`;
+    if (b.workers !== undefined && b.type !== 'wall' && b.type !== 'tower') html += `Workers: ${b.workers}<br>`;
     if (def.produces) html += `Produces: ${def.produces}<br>`;
     if (def.housing)  html += `Housing: ${def.housing}<br>`;
   }
