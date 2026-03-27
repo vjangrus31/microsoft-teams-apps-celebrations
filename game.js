@@ -42,6 +42,7 @@ let state = {
   colonists: [],
   raiders: [],
   floats: [],       // floating damage/resource text
+  particles: [],    // smoke
   nextRaidIn: 500,  // ticks until first raid
   usedNames: [],
   placing: null,
@@ -307,7 +308,9 @@ function placeBuilding(r, c, type) {
 
   const id = state.buildings.length;
   const def2 = BUILDINGS[type];
-  const b = { id, type, r, c, workers: 0, progress: 0, active: true, hp: def2.maxHp, attackTimer: 0 };
+  // walls/towers are instant; others require construction
+  const instant = (type === 'wall' || type === 'tower');
+  const b = { id, type, r, c, workers: 0, progress: 0, active: instant, constructing: !instant, hp: def2.maxHp, attackTimer: 0 };
   state.buildings.push(b);
 
   // Mark tiles
@@ -316,16 +319,20 @@ function placeBuilding(r, c, type) {
     for (let dc = 0; dc < sz; dc++)
       state.tiles[r + dr][c + dc].building = id;
 
-  if (type === 'house') {
+  const instant2 = (type === 'wall' || type === 'tower');
+  if (instant2) {
+    log(`Built ${def.name}`);
+  } else {
+    log(`🔨 Constructing ${def.name}…`);
+  }
+  if (type === 'house' && instant2) {
     state.housing += def.housing;
-    // Spawn new colonists up to housing limit, if food allows
     const toSpawn = Math.min(def.housing, Math.floor(state.resources.food / 5));
     for (let i = 0; i < toSpawn; i++) {
       if (state.population < state.housing) spawnColonist();
     }
     assignJobs();
   }
-  log(`Built ${def.name}`);
   updateResourceUI();
   return true;
 }
@@ -340,6 +347,30 @@ function tick() {
   state.tick++;
   const t = state.tick;
 
+  // Construction progress (1 colonist = 1 pt/tick, done at 120)
+  const BUILD_TIME = 120;
+  state.buildings.forEach(b => {
+    if (!b.constructing) return;
+    b.progress += 1; // base progress; colonists nearby speed it up implicitly
+    if (b.progress >= BUILD_TIME) {
+      b.constructing = false;
+      b.active = true;
+      b.progress = BUILD_TIME;
+      const def = BUILDINGS[b.type];
+      log(`✅ ${def.name} complete`);
+      if (b.type === 'house') {
+        state.housing += def.housing;
+        const toSpawn = Math.min(def.housing, Math.floor(state.resources.food / 5));
+        for (let i = 0; i < toSpawn; i++) {
+          if (state.population < state.housing) spawnColonist();
+        }
+        assignJobs();
+      } else {
+        assignJobs();
+      }
+    }
+  });
+
   // Production every tick
   state.buildings.forEach(b => {
     if (!b.active) return;
@@ -351,6 +382,31 @@ function tick() {
     if (def.produces === 'food') rate *= FOOD_SEASON_MULT[state.season];
     state.resources[def.produces] = (state.resources[def.produces] || 0) + rate;
   });
+
+  // Smoke particles from active production buildings
+  if (t % 8 === 0) {
+    state.buildings.forEach(b => {
+      if (!b.active || !BUILDINGS[b.type].produces) return;
+      state.particles.push({
+        x: (b.c + 0.4 + Math.random() * 0.2) * TILE,
+        y: (b.r + 0.1) * TILE,
+        vx: (Math.random() - 0.5) * 0.3,
+        vy: -(0.4 + Math.random() * 0.4),
+        life: 50 + Math.random() * 30,
+        maxLife: 80,
+        size: 3 + Math.random() * 3,
+      });
+    });
+  }
+
+  // Update smoke particles
+  state.particles = state.particles.filter(p => {
+    p.x += p.vx; p.y += p.vy;
+    p.vx *= 0.98;
+    p.life--;
+    return p.life > 0;
+  });
+  if (state.particles.length > 200) state.particles.splice(0, state.particles.length - 200);
 
   // Hunger / food consumption + starvation deaths
   if (t % 20 === 0) {
@@ -464,13 +520,27 @@ function screenToTile(sx, sy) {
 
 // ---- Terrain drawing ----
 
-function drawGrass(sx, sy) {
+function drawSnowOverlay(sx, sy, r, c) {
+  ctx.fillStyle = 'rgba(220,235,255,0.45)';
+  ctx.fillRect(sx, sy, TILE, TILE);
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  for (let i = 0; i < 4; i++) {
+    const nx = sx + th(r, c, i * 2) * TILE;
+    const ny = sy + th(r, c, i * 2 + 1) * TILE;
+    ctx.beginPath(); ctx.arc(nx, ny, 1.5, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+function drawGrass(sx, sy, r, c) {
   const g = ctx.createLinearGradient(sx, sy, sx + TILE, sy + TILE);
-  g.addColorStop(0, '#5aaa48');
-  g.addColorStop(1, '#488838');
+  if (state.season === 3) {
+    g.addColorStop(0, '#c8d8d0'); g.addColorStop(1, '#a8b8b0');
+  } else {
+    g.addColorStop(0, '#5aaa48'); g.addColorStop(1, '#488838');
+  }
   ctx.fillStyle = g;
   ctx.fillRect(sx, sy, TILE, TILE);
-  // subtle edge shadow
+  if (state.season === 3) drawSnowOverlay(sx, sy, r, c);
   ctx.strokeStyle = 'rgba(0,0,0,0.08)';
   ctx.lineWidth = 1;
   ctx.strokeRect(sx + 0.5, sy + 0.5, TILE - 1, TILE - 1);
@@ -508,8 +578,11 @@ function drawTree(cx, cy, size) {
 
 function drawForest(sx, sy, r, c, resources) {
   const g = ctx.createLinearGradient(sx, sy, sx + TILE, sy + TILE);
-  g.addColorStop(0, '#2c561a');
-  g.addColorStop(1, '#1e3e10');
+  if (state.season === 3) {
+    g.addColorStop(0, '#384830'); g.addColorStop(1, '#283820');
+  } else {
+    g.addColorStop(0, '#2c561a'); g.addColorStop(1, '#1e3e10');
+  }
   ctx.fillStyle = g;
   ctx.fillRect(sx, sy, TILE, TILE);
   ctx.strokeStyle = 'rgba(0,0,0,0.1)';
@@ -521,6 +594,7 @@ function drawForest(sx, sy, r, c, resources) {
     if (resources > 5)
       drawTree(sx + TILE * (0.58 + h2 * 0.18), sy + TILE * (0.48 + h2 * 0.22), 10 + h2 * 4);
   }
+  if (state.season === 3) drawSnowOverlay(sx, sy, r, c);
 }
 
 function drawRock(cx, cy, size) {
@@ -944,7 +1018,7 @@ function draw() {
       const sx = c * TILE - state.camera.x;
       const sy = r * TILE - state.camera.y;
       switch (tile.type) {
-        case T.GRASS:  drawGrass(sx, sy); break;
+        case T.GRASS:  drawGrass(sx, sy, r, c); break;
         case T.FOREST: drawForest(sx, sy, r, c, tile.resource); break;
         case T.STONE:  drawStone(sx, sy, r, c, tile.resource); break;
         case T.WATER:  drawWater(sx, sy); break;
@@ -994,6 +1068,35 @@ function draw() {
   ctx.save();
   state.raiders.forEach(drawRaider);
   ctx.restore();
+
+  // Smoke particles
+  ctx.save();
+  state.particles.forEach(p => {
+    const alpha = (p.life / p.maxLife) * 0.55;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#c0b8b0';
+    const { x: sx, y: sy } = worldToScreen(p.x, p.y);
+    ctx.beginPath();
+    ctx.arc(sx, sy, p.size * (1 + (1 - p.life / p.maxLife) * 0.8), 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  // Construction progress bars
+  state.buildings.forEach(b => {
+    if (!b.constructing) return;
+    const def = BUILDINGS[b.type];
+    const sx = b.c * TILE - state.camera.x;
+    const sy = b.r * TILE - state.camera.y;
+    const bw = def.size * TILE - 4;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(sx + 2, sy + 2, bw, 5);
+    ctx.fillStyle = '#f0c040';
+    ctx.fillRect(sx + 2, sy + 2, bw * (b.progress / 120), 5);
+    ctx.font = 'bold 9px Inter,sans-serif';
+    ctx.fillStyle = '#fff';
+    ctx.fillText('🔨', sx + 2, sy + def.size * TILE - 4);
+  });
 
   // Floating text
   ctx.save();
@@ -1086,6 +1189,57 @@ function showTileInfo(r, c) {
 }
 
 // ============================================================
+// Save / Load
+// ============================================================
+const SAVE_KEY = 'colony_builder_save';
+
+function saveGame() {
+  const save = {
+    resources: state.resources,
+    population: state.population,
+    housing: state.housing,
+    day: state.day,
+    tick: state.tick,
+    seasonTick: state.seasonTick,
+    season: state.season,
+    tiles: state.tiles,
+    buildings: state.buildings,
+    colonists: state.colonists,
+    nextRaidIn: state.nextRaidIn,
+    usedNames: state.usedNames,
+  };
+  localStorage.setItem(SAVE_KEY, JSON.stringify(save));
+  log('💾 Game saved');
+}
+
+function loadGame() {
+  const raw = localStorage.getItem(SAVE_KEY);
+  if (!raw) { log('No save found'); return; }
+  try {
+    const save = JSON.parse(raw);
+    Object.assign(state, save);
+    state.raiders = [];
+    state.floats = [];
+    state.particles = [];
+    state.placing = null;
+    state.selectedTile = null;
+    state.dragging = false;
+    // Re-center camera
+    const cr = Math.floor(ROWS / 2), cc = Math.floor(COLS / 2);
+    state.camera.x = cc * TILE - canvas.width / 2;
+    state.camera.y = cr * TILE - canvas.height / 2;
+    clampCamera();
+    updateResourceUI();
+    document.getElementById('day-label').textContent = `Day ${state.day}`;
+    document.getElementById('season-label').textContent = SEASON_NAMES[state.season];
+    document.getElementById('season-label').style.color = SEASON_COLORS[state.season];
+    log('📂 Game loaded');
+  } catch (e) {
+    log('Failed to load save');
+  }
+}
+
+// ============================================================
 // Input
 // ============================================================
 function initInput() {
@@ -1129,6 +1283,17 @@ function initInput() {
   });
 
   canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+  // Keyboard shortcuts
+  window.addEventListener('keydown', e => {
+    if (e.key === 's' || e.key === 'S') saveGame();
+    if (e.key === 'l' || e.key === 'L') loadGame();
+    if (e.key === 'Escape') setPlacing(null);
+  });
+
+  // Save/load buttons
+  document.getElementById('btn-save')?.addEventListener('click', saveGame);
+  document.getElementById('btn-load')?.addEventListener('click', loadGame);
 
   canvas.addEventListener('wheel', e => {
     // Scroll camera
