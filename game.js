@@ -31,7 +31,7 @@ const FOOD_SEASON_MULT = [1.0, 1.2, 0.8, 0.4]; // farm output per season
 // State
 // ============================================================
 let state = {
-  resources: { wood: 20, stone: 10, food: 15 },
+  resources: { wood: 20, stone: 10, food: 30 },
   population: 0,
   housing: 0,
   day: 1,
@@ -613,10 +613,11 @@ function tick() {
         c.hunger = 0;
         if (state.resources.food >= 1) {
           state.resources.food -= 1;
-          c.hunger = Math.min(100, c.hunger + 30);
+          c.hunger = Math.min(100, c.hunger + 60);
+          c.starving = 0; // eating resets starvation counter immediately
         } else {
           c.starving = (c.starving || 0) + 1;
-          if (c.starving >= 8) toKill.push(c.id); // ~8 hunger ticks with no food
+          if (c.starving >= 15) toKill.push(c.id); // ~15 hunger ticks with no food
         }
       } else {
         c.starving = 0;
