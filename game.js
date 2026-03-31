@@ -773,11 +773,35 @@ let buildingMeshes=new Map(),colonistMeshes=new Map(),raiderMeshes=new Map();
 let smokeMesh,ghostMesh=null;
 let mmCanvas,mmCtx;
 
-const SKY=[0x87ceeb,0x9ad8f5,0xd07030,0xc0d8e8];
-const TCOLORS=[[0x5aaa48,0x2c561a,0x787068,0x2060cc,0x9a7840],[0x5aba4a,0x386820,0x787068,0x1848b0,0x9a7840],[0x9a7040,0x4a3410,0x787068,0x1848a0,0x8a6830],[0xb0b8c0,0x485850,0x909098,0x3060a0,0x909898]];
+// Anime-vibrant palette
+const SKY=[0xa8d8f8,0x78c8f8,0xf8b858,0xd0e8f8]; // spring,summer,autumn,winter
+const TCOLORS=[
+  [0x68d048,0x28a820,0xa8a8b8,0x50b8e8,0xb88038], // spring
+  [0x58c838,0x18a010,0x9898a8,0x38a8e8,0xa87028], // summer
+  [0xd09830,0x783808,0xa09890,0x3090c0,0x907028], // autumn
+  [0xd8e8f8,0x507868,0xa8b0c8,0x4098c8,0xa8b8c8], // winter
+];
 
-function mat(col,opts={}){return new THREE.MeshStandardMaterial({color:col,roughness:0.82,metalness:0.05,...opts});}
-function metalMat(col){return new THREE.MeshStandardMaterial({color:col,roughness:0.35,metalness:0.7});}
+let toonGrad=null,OUTLINE_MAT=null;
+function createToonGrad(){
+  const canvas=document.createElement('canvas');canvas.width=4;canvas.height=1;
+  const ctx=canvas.getContext('2d');
+  // 4 steps: cool purple shadow → muted mid → lit → bright highlight
+  ['#38305a','#928898','#e8e0f0','#ffffff'].forEach((c,i)=>{ctx.fillStyle=c;ctx.fillRect(i,0,1,1);});
+  const t=new THREE.CanvasTexture(canvas);
+  t.minFilter=THREE.NearestFilter;t.magFilter=THREE.NearestFilter;
+  return t;
+}
+function addOutlines(obj,scale=1.055){
+  obj.traverse(child=>{
+    if(!child.isMesh||child._ol||child.material?.isMeshBasicMaterial)return;
+    child._ol=true;
+    const ol=new THREE.Mesh(child.geometry,OUTLINE_MAT);
+    ol.scale.setScalar(scale);child.add(ol);
+  });
+}
+function mat(col,opts={}){return new THREE.MeshToonMaterial({color:col,gradientMap:toonGrad,...opts});}
+function metalMat(col){return new THREE.MeshToonMaterial({color:col,gradientMap:toonGrad});}
 function bmat(col){return new THREE.MeshBasicMaterial({color:col});}
 
 function initThree(){
@@ -791,24 +815,26 @@ function initThree(){
   renderer.outputColorSpace=THREE.SRGBColorSpace;
   renderer.setSize(area.clientWidth,area.clientHeight);
   area.appendChild(renderer.domElement);
+  // Toon shading setup — must happen before any mat() calls
+  toonGrad=createToonGrad();
+  OUTLINE_MAT=new THREE.MeshBasicMaterial({color:0x1a1030,side:THREE.BackSide});
   scene=new THREE.Scene();
   scene.background=new THREE.Color(SKY[state.season]);
-  scene.fog=new THREE.FogExp2(SKY[state.season],0.016);
+  scene.fog=new THREE.FogExp2(SKY[state.season],0.012);
   setupCamera();
-  // Hemisphere: sky blue top, warm ground bounce bottom
-  hemiLight=new THREE.HemisphereLight(0x90b8d8,0x4a3820,0.7);
+  // Strong key light — toon shading needs clear directional light for step contrast
+  hemiLight=new THREE.HemisphereLight(0xb8d8f8,0x3a2010,0.35);
   scene.add(hemiLight);
-  // Key sun light
-  const sun=new THREE.DirectionalLight(0xfff4d0,1.3);
-  sun.position.set(25,38,12);sun.castShadow=true;
+  const sun=new THREE.DirectionalLight(0xfff8d8,2.1);
+  sun.position.set(22,36,10);sun.castShadow=true;
   sun.shadow.mapSize.set(2048,2048);
   const sc=sun.shadow.camera;sc.left=-60;sc.right=60;sc.top=50;sc.bottom=-50;sc.near=1;sc.far=180;
-  sun.shadow.bias=-0.0005;
+  sun.shadow.bias=-0.0006;
   scene.add(sun);
   sunLight=sun;
-  // Soft fill from opposite side
-  const fill=new THREE.DirectionalLight(0x8090c0,0.3);
-  fill.position.set(-15,20,-10);scene.add(fill);
+  // Subtle rim from opposite side
+  const fill=new THREE.DirectionalLight(0x8090d0,0.18);
+  fill.position.set(-15,18,-10);scene.add(fill);
   fillLight=fill;
   terrainGroup=new THREE.Group();scene.add(terrainGroup);
   decorGroup=new THREE.Group();scene.add(decorGroup);
@@ -896,11 +922,11 @@ function updateDayNight(){
   if(scene&&scene.fog)scene.fog.color.copy(skyCol);
 
   if(sunLight){
-    sunLight.intensity=0.2+sunHeight*1.2;
-    sunLight.color.set(sunHeight>0.3?0xfff0c0:0xff6020);
+    sunLight.intensity=0.3+sunHeight*1.9; // toon needs strong directional
+    sunLight.color.set(sunHeight>0.3?0xfff8d0:0xff7030);
   }
-  if(hemiLight)hemiLight.intensity=0.3+sunHeight*0.5;
-  if(fillLight)fillLight.intensity=0.1+sunHeight*0.25;
+  if(hemiLight)hemiLight.intensity=0.18+sunHeight*0.28;
+  if(fillLight)fillLight.intensity=0.06+sunHeight*0.14;
 }
 
 function updateSeasonVisuals(){
@@ -941,13 +967,19 @@ function buildDecos(g,r,c,tile){
 }
 
 function addTree(g,ox,oz,size,hsh){
-  const leafCols=[0x2d7a18,0x38962a,0x44b035];
-  const col=leafCols[Math.floor(hsh*3)];
-  const trunk=new THREE.Mesh(new THREE.CylinderGeometry(size*0.1,size*0.12,size*0.5,6),mat(0x6a3818));
-  trunk.position.set(ox,0.15+size*0.25,oz);trunk.castShadow=true;g.add(trunk);
-  [[0,size*0.9],[size*0.35,size*0.7],[size*0.62,size*0.52]].forEach(([yo,sc])=>{
-    const cone=new THREE.Mesh(new THREE.ConeGeometry(sc*0.55,sc*0.7,7),mat(col));
-    cone.position.set(ox,0.15+size*0.28+yo,oz);cone.castShadow=true;g.add(cone);
+  const leafCols=[0x40c830,0x30b820,0x58d840,0x28a818];
+  const c0=leafCols[Math.floor(hsh*4)%4];
+  const c1=leafCols[(Math.floor(hsh*7)+2)%4];
+  const trunkH=size*0.52;
+  const trunk=new THREE.Mesh(new THREE.CylinderGeometry(size*0.11,size*0.15,trunkH,8),mat(0x7a4018));
+  trunk.position.set(ox,0.15+trunkH/2,oz);trunk.castShadow=true;g.add(trunk);
+  // Main Ghibli round leaf mass
+  const main=new THREE.Mesh(new THREE.SphereGeometry(size*0.52,9,7),mat(c0));
+  main.scale.y=0.9;main.position.set(ox,0.15+trunkH+size*0.38,oz);main.castShadow=true;g.add(main);
+  // Smaller overlapping blobs for cloud-like silhouette
+  [[size*0.32,size*0.52,0],[-size*0.30,size*0.46,size*0.2],[0,size*0.58,-size*0.28],[size*0.18,size*0.62,size*0.25]].forEach(([bx,by,bz])=>{
+    const blob=new THREE.Mesh(new THREE.SphereGeometry(size*0.29,8,6),mat(c1));
+    blob.position.set(ox+bx,0.15+trunkH+size*0.12+by,oz+bz);blob.castShadow=true;g.add(blob);
   });
 }
 
@@ -975,14 +1007,24 @@ function cy(g,rt,rb,h,seg,col,x,y,z){
 }
 
 function addBuildingMesh(b){
-  const g=new THREE.Group();buildingGroup.add(g);buildingMeshes.set(b.id,g);assembleBuildingGeo(b,g);
+  const g=new THREE.Group();buildingGroup.add(g);buildingMeshes.set(b.id,g);
+  assembleBuildingGeo(b,g);addOutlines(g);
 }
 function rebuildBuildingMesh(id){
   const b=state.buildings[id];if(!b)return;
   let g=buildingMeshes.get(id);
   if(!g){g=new THREE.Group();buildingGroup.add(g);buildingMeshes.set(id,g);}
   while(g.children.length)g.remove(g.children[0]);
-  assembleBuildingGeo(b,g);
+  assembleBuildingGeo(b,g);addOutlines(g);
+}
+// Gabled roof helper: two angled panels + ridge beam
+function gableRoof(g,w,d,rh,col,wallY,ox=0,oz=0){
+  const hd=d/2,sl=Math.sqrt(hd*hd+rh*rh),ang=Math.atan2(rh,hd);
+  const rf1=new THREE.Mesh(new THREE.BoxGeometry(w+0.1,0.07,sl),mat(col));
+  rf1.position.set(ox,wallY+rh/2,oz-hd/2);rf1.rotation.x=ang;rf1.castShadow=true;g.add(rf1);
+  const rf2=new THREE.Mesh(new THREE.BoxGeometry(w+0.1,0.07,sl),mat(col));
+  rf2.position.set(ox,wallY+rh/2,oz+hd/2);rf2.rotation.x=-ang;rf2.castShadow=true;g.add(rf2);
+  bx(g,w+0.14,0.07,0.07,0x1a1008,ox,wallY+rh+0.01,oz); // ridge beam
 }
 function assembleBuildingGeo(b,g){
   const sz=BUILDINGS[b.type].size;
@@ -1061,40 +1103,137 @@ function assembleBuildingGeo(b,g){
     return;
   }
   switch(b.type){
-    case'house':
-      bx(g,0.9,0.12,0.9,0x8a7060,0,0.06,0);bx(g,0.85,0.55,0.85,0x7a5030,0,0.4,0);
-      bx(g,0.12,0.12,0.02,0x8090cc,0.2,0.44,0.43);bx(g,0.12,0.12,0.02,0x8090cc,-0.2,0.44,0.43);
-      bx(g,0.2,0.28,0.02,0x3a1800,0,0.28,0.43);cy(g,0,0.65,0.45,4,0xb08020,0,0.89,0);break;
-    case'farm':
-      bx(g,1.9,0.08,1.9,b.active?0x6a5030:0x5a4020,0,0.04,0);
-      for(let i=-3;i<=3;i++)bx(g,1.8,0.02,0.05,0x8a6040,0,0.09,i*0.25);
-      if(b.active){bx(g,0.04,0.5,0.04,0x7a4a20,0.5,0.3,-0.5);bx(g,0.35,0.04,0.04,0x7a4a20,0.5,0.4,-0.5);cy(g,0,0.1,0.15,8,0xd0a020,0.5,0.55,-0.5);}
-      break;
-    case'woodcutter':
-      bx(g,0.9,0.12,0.9,0x8a7060,0,0.06,0);bx(g,0.8,0.5,0.8,0x6a4020,0,0.37,0);
-      bx(g,0.2,0.28,0.02,0x3a1800,0,0.24,0.41);cy(g,0,0.55,0.35,4,0x9a3010,0,0.8,0);
-      for(let i=0;i<3;i++){const cl=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.07,0.35,8),mat(0x8a5020));cl.rotation.z=Math.PI/2;cl.position.set(-0.38,0.15+i*0.1,0.1+i*0.05);g.add(cl);}
-      break;
-    case'quarry':
-      bx(g,0.95,0.08,0.95,0x706860,0,-0.02,0);
-      bx(g,0.95,0.1,0.08,0x808070,0,0.05,-0.44);bx(g,0.95,0.1,0.08,0x808070,0,0.05,0.44);
-      addRock(g,-0.2,0,0.09,0.4,0.1);addRock(g,0.15,-0.1,0.07,1.2,0.2);
-      bx(g,0.04,0.5,0.04,0x6a4020,0.3,0.28,0);bx(g,0.4,0.04,0.04,0x6a4020,0.1,0.52,0);break;
-    case'storehouse':
-      bx(g,0.9,0.12,0.9,0x8a7060,0,0.06,0);bx(g,0.88,0.55,0.88,0x7a5030,0,0.4,0);
-      cy(g,0.2,0.6,0.3,4,0x503010,0,0.75,0);
-      {const bar=new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.1,0.22,12),mat(0x6a3818));bar.position.set(0.3,0.18,0.3);g.add(bar);}break;
-    case'wall':
-      bx(g,0.95,0.6,0.95,0x909088,0,0.3,0);
-      [-0.3,0.3].forEach(i=>{bx(g,0.2,0.18,0.2,0xa0a090,i,0.69,0);bx(g,0.2,0.18,0.2,0xa0a090,0,0.69,i);});break;
-    case'tower':
-      bx(g,0.85,0.2,0.85,0x888078,0,0.1,0);bx(g,0.75,1.4,0.75,0x808070,0,0.9,0);
-      bx(g,0.08,0.25,0.02,0x1a1408,0,0.9,0.38);
-      [-0.25,0.25].forEach(i=>{bx(g,0.2,0.2,0.2,0x909080,i,1.7,0);bx(g,0.2,0.2,0.2,0x909080,0,1.7,i);});break;
-    case'barracks':
-      bx(g,0.9,0.12,0.9,0x8a7060,0,0.06,0);bx(g,0.85,0.55,0.85,0x7a6050,0,0.4,0);
-      cy(g,0,0.65,0.4,4,0x8a2010,0,0.87,0);bx(g,0.18,0.25,0.02,0x2a1000,0,0.24,0.43);
-      bx(g,0.04,0.3,0.04,0xc0a030,-0.25,0.3,-0.2);bx(g,0.04,0.3,0.04,0xc0a030,0.25,0.3,-0.2);break;
+    case'house':{
+      // Stone foundation
+      bx(g,0.94,0.15,0.94,0x8898b0,0,0.075,0);
+      // Cream plaster walls
+      bx(g,0.88,0.56,0.88,0xf0e4c4,0,0.43,0);
+      // Dark timber framing — corner posts
+      [[-0.42,0.42],[0.42,0.42],[0.42,-0.42],[-0.42,-0.42]].forEach(([px,pz])=>bx(g,0.055,0.58,0.055,0x2a1808,px,0.44,pz));
+      // Horizontal mid-beams front/back/sides
+      bx(g,0.9,0.045,0.045,0x2a1808,0,0.30,0.44);bx(g,0.9,0.045,0.045,0x2a1808,0,0.30,-0.44);
+      bx(g,0.045,0.045,0.9,0x2a1808,0.44,0.30,0);bx(g,0.045,0.045,0.9,0x2a1808,-0.44,0.30,0);
+      // Door — dark wood with cross-beam
+      bx(g,0.22,0.32,0.055,0x4a2008,0,0.25,0.44);bx(g,0.22,0.04,0.056,0x2a1008,0,0.35,0.44);
+      // Windows — sky blue
+      bx(g,0.18,0.15,0.05,0x90c8f8,0.26,0.50,0.44);bx(g,0.18,0.15,0.05,0x90c8f8,-0.26,0.50,0.44);
+      // Window frames
+      bx(g,0.22,0.19,0.04,0x2a1808,0.26,0.50,0.43);bx(g,0.22,0.19,0.04,0x2a1808,-0.26,0.50,0.43);
+      // Teal gable roof
+      gableRoof(g,0.96,0.96,0.40,0x2a7860,0.72);
+      // Chimney
+      bx(g,0.13,0.30,0.13,0x7070a0,0.22,0.97,-0.15);bx(g,0.17,0.055,0.17,0x555565,0.22,1.12,-0.15);
+      break;}
+    case'farm':{
+      // Rich brown soil
+      bx(g,1.94,0.09,1.94,0x7a4820,0,0.045,0);
+      // Bright crop rows
+      for(let i=-3;i<=3;i++)bx(g,1.86,0.07,0.14,b.active?0x58c030:0x405018,0,0.10,i*0.26);
+      // Wooden fence around perimeter
+      for(let i=-3;i<=3;i+=2){
+        bx(g,0.055,0.28,0.055,0x8a5020,i*0.3,0.18,-0.97);bx(g,0.055,0.28,0.055,0x8a5020,i*0.3,0.18,0.97);
+        bx(g,0.055,0.28,0.055,0x8a5020,-0.97,0.18,i*0.3);bx(g,0.055,0.28,0.055,0x8a5020,0.97,0.18,i*0.3);
+      }
+      bx(g,1.94,0.04,0.04,0x8a5020,0,0.20,-0.97);bx(g,1.94,0.04,0.04,0x8a5020,0,0.20,0.97);
+      bx(g,0.04,0.04,1.94,0x8a5020,-0.97,0.20,0);bx(g,0.04,0.04,1.94,0x8a5020,0.97,0.20,0);
+      // Scarecrow when active
+      if(b.active){
+        bx(g,0.055,0.48,0.055,0xb07030,0.58,0.30,-0.60);bx(g,0.36,0.055,0.055,0xb07030,0.58,0.40,-0.60);
+        bx(g,0.16,0.16,0.055,0xd09828,0.58,0.52,-0.60);
+      }
+      break;}
+    case'woodcutter':{
+      // Stone foundation
+      bx(g,0.92,0.14,0.92,0x707868,0,0.07,0);
+      // Warm log-cabin walls
+      bx(g,0.86,0.54,0.86,0x9a5828,0,0.42,0);
+      // Log texture strips
+      for(let i=0;i<4;i++)bx(g,0.88,0.03,0.025,0x6a3818,0,0.20+i*0.12,0.44);
+      // Door
+      bx(g,0.22,0.34,0.055,0x3a1808,0,0.26,0.44);
+      // Window
+      bx(g,0.20,0.16,0.05,0x90c8f8,0.3,0.50,0.44);
+      // Warm brown gabled roof
+      gableRoof(g,0.92,0.92,0.38,0x7a3810,0.68);
+      // Chimney
+      bx(g,0.11,0.24,0.11,0x909090,-0.2,0.90,0.1);
+      // Log pile
+      for(let i=0;i<3;i++){const cl=new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.08,0.38,8),mat(0x9a5828));cl.rotation.z=Math.PI/2;cl.position.set(-0.38,0.14+i*0.11,0.1+i*0.05);cl.castShadow=true;g.add(cl);}
+      // Stump
+      cy(g,0.13,0.15,0.13,8,0x7a4020,0.3,0.10,0.3);
+      break;}
+    case'quarry':{
+      // Gray-blue stone floor
+      bx(g,0.96,0.10,0.96,0x9098a8,0,-0.01,0);
+      // Layered rock face at back
+      bx(g,0.94,0.22,0.12,0xa0a8b8,0,0.16,-0.43);bx(g,0.94,0.16,0.12,0x888898,0,0.10,0.43);
+      // Rock piles
+      addRock(g,-0.22,0,0.11,0.4,0.1);addRock(g,0.18,-0.15,0.09,1.2,0.2);addRock(g,-0.05,0.28,0.08,2.1,0.15);
+      // Wooden crane arm
+      bx(g,0.055,0.52,0.055,0x7a4820,0.32,0.33,0);bx(g,0.44,0.05,0.05,0x7a4820,0.10,0.58,0);
+      // Hanging rope
+      bx(g,0.025,0.20,0.025,0x5a4020,-0.10,0.44,0);
+      break;}
+    case'storehouse':{
+      // Stone foundation
+      bx(g,0.94,0.14,0.94,0x8090a0,0,0.07,0);
+      // Wide barn walls — warm amber
+      bx(g,0.90,0.58,0.90,0xb06828,0,0.44,0);
+      // Plank lines
+      for(let i=0;i<5;i++)bx(g,0.92,0.025,0.025,0x8a4818,0,0.18+i*0.10,0.45);
+      // Double barn doors
+      bx(g,0.36,0.40,0.055,0x5a2808,-0.22,0.34,0.45);bx(g,0.36,0.40,0.055,0x5a2808,0.22,0.34,0.45);
+      bx(g,0.04,0.07,0.04,0xc09030,-0.04,0.34,0.46);bx(g,0.04,0.07,0.04,0xc09030,0.04,0.34,0.46);
+      // Dark gable roof
+      gableRoof(g,0.96,0.96,0.34,0x5a2808,0.73);
+      // Barrels
+      cy(g,0.10,0.10,0.22,8,0x8a4820,-0.36,0.16,-0.32);cy(g,0.10,0.10,0.22,8,0x7a3818,0.32,0.16,-0.36);
+      bx(g,0.20,0.04,0.20,0x5a2808,-0.36,0.26,-0.32);bx(g,0.20,0.04,0.20,0x5a2808,0.32,0.26,-0.36);
+      break;}
+    case'wall':{
+      // Main stone body — blue-gray
+      bx(g,0.96,0.64,0.96,0x9898b0,0,0.32,0);
+      // Mortar lines
+      bx(g,0.98,0.025,0.98,0x7878a0,0,0.22,0);bx(g,0.98,0.025,0.98,0x7878a0,0,0.44,0);
+      // 4 chunky battlements (merlons)
+      [[-0.28,0.28],[0.28,0.28],[0.28,-0.28],[-0.28,-0.28]].forEach(([px,pz])=>bx(g,0.26,0.24,0.26,0xa0a0b8,px,0.76,pz));
+      break;}
+    case'tower':{
+      // Wide stone base
+      bx(g,0.90,0.24,0.90,0x8890a8,0,0.12,0);
+      // Cylindrical tower body
+      const tbody=new THREE.Mesh(new THREE.CylinderGeometry(0.30,0.36,1.50,12),mat(0x8898a8));tbody.position.y=0.97;tbody.castShadow=true;g.add(tbody);
+      // Arrow slits
+      [0,Math.PI*0.5,Math.PI,Math.PI*1.5].forEach(a=>{
+        const sl=new THREE.Mesh(new THREE.BoxGeometry(0.07,0.20,0.065),mat(0x101828));
+        sl.position.set(Math.sin(a)*0.31,0.90,Math.cos(a)*0.31);g.add(sl);
+      });
+      // Battlement ring — 8 merlons
+      for(let i=0;i<8;i++){const a=i/8*Math.PI*2;bx(g,0.17,0.22,0.17,0x9898b0,Math.sin(a)*0.28,1.82,Math.cos(a)*0.28);}
+      // Conical slate-green roof
+      const tcone=new THREE.Mesh(new THREE.ConeGeometry(0.40,0.58,10),mat(0x2a4838));tcone.position.y=2.04;tcone.castShadow=true;g.add(tcone);
+      break;}
+    case'barracks':{
+      // Stone foundation
+      bx(g,0.92,0.14,0.92,0x706858,0,0.07,0);
+      // Dark military walls
+      bx(g,0.88,0.56,0.88,0x7a5030,0,0.44,0);
+      // Stone corner reinforcements
+      [[-0.43,0.43],[0.43,0.43],[0.43,-0.43],[-0.43,-0.43]].forEach(([px,pz])=>bx(g,0.09,0.60,0.09,0x606050,px,0.44,pz));
+      // Reinforced door
+      bx(g,0.24,0.34,0.055,0x2a1008,0,0.26,0.44);
+      bx(g,0.26,0.035,0.056,0x707880,0,0.22,0.44);bx(g,0.26,0.035,0.056,0x707880,0,0.32,0.44);
+      // Deep red gable roof
+      gableRoof(g,0.94,0.94,0.40,0x8a1818,0.69);
+      // Spear rack — two crossed spears
+      const sp1=new THREE.Mesh(new THREE.CylinderGeometry(0.018,0.018,0.58,6),mat(0x7a4018));
+      sp1.rotation.z=0.32;sp1.position.set(-0.33,0.42,-0.22);g.add(sp1);
+      const sp2=new THREE.Mesh(new THREE.CylinderGeometry(0.018,0.018,0.58,6),mat(0x7a4018));
+      sp2.rotation.z=-0.32;sp2.position.set(-0.24,0.42,-0.22);g.add(sp2);
+      bx(g,0.035,0.11,0.035,0x9098a0,-0.42,0.65,-0.22);bx(g,0.035,0.11,0.035,0x9098a0,-0.15,0.65,-0.22);
+      // Red banner
+      bx(g,0.032,0.44,0.032,0x8a5020,0.38,0.56,-0.38);bx(g,0.24,0.16,0.032,0xc02020,0.50,0.70,-0.38);
+      break;}
   }
   if(b.hp<=0){const ov=new THREE.Mesh(new THREE.BoxGeometry(sz*0.9,0.3,sz*0.9),mat(0x332211,{transparent:true,opacity:0.85}));ov.position.y=0.2;g.add(ov);}
 }
@@ -1104,7 +1243,7 @@ function assembleBuildingGeo(b,g){
 const SKIN_TONES=[0xf5c99a,0xedb87a,0xe8a060,0xc87a50,0x8a5030];
 const HAIR_COLORS=[0x1a0e06,0x3d1f08,0x7a3d10,0x8a6030,0xb09060,0xc8b880,0x6a2818,0x484030];
 
-function sMat(col,rough=0.85,metal=0){return new THREE.MeshStandardMaterial({color:col,roughness:rough,metalness:metal});}
+function sMat(col,rough=0.85,metal=0){return new THREE.MeshToonMaterial({color:col,gradientMap:toonGrad});}
 
 function createColonistMesh(c){
   const g=new THREE.Group();
@@ -1113,16 +1252,17 @@ function createColonistMesh(c){
   const hairColor=HAIR_COLORS[c.id%HAIR_COLORS.length];
   const hairStyle=c.id%4; // 0=short, 1=medium, 2=long back, 3=bald
 
-  const skinM=sMat(skinTone,0.88);
-  const shirtM=sMat(new THREE.Color(`hsl(${hue},60%,38%)`),0.92);
-  const pantsM=sMat(new THREE.Color(`hsl(${(hue+40)%360},25%,22%)`),0.92);
-  const hairM=sMat(hairColor,0.9);
-  const bootM=sMat(0x2a1808,0.8);
-  const beltM=sMat(0x3a2010,0.75,0.1);
-  const buckleM=sMat(0xa08040,0.4,0.7);
-  const woodM=sMat(0x7a4418,0.85);
-  const ironM=sMat(0x707880,0.45,0.6);
-  const leatherM=sMat(0x5a3820,0.85);
+  const skinM=sMat(skinTone);
+  // Anime-vibrant clothing — saturated, cheerful
+  const shirtM=sMat(new THREE.Color(`hsl(${hue},72%,52%)`));
+  const pantsM=sMat(new THREE.Color(`hsl(${(hue+40)%360},40%,30%)`));
+  const hairM=sMat(hairColor);
+  const bootM=sMat(0x3a2010);
+  const beltM=sMat(0x4a2c14);
+  const buckleM=sMat(0xc8a040);
+  const woodM=sMat(0x8a4c1c);
+  const ironM=sMat(0x8090a0);
+  const leatherM=sMat(0x6a4028);
 
   // ── Legs ──
   const lLeg=new THREE.Group();lLeg.name='lLeg';lLeg.position.set(-0.07,0.27,0);
@@ -1197,7 +1337,7 @@ function createColonistMesh(c){
   body.add(rArm);
 
   // ── Head ──
-  const headG=new THREE.Group();headG.name='head';headG.position.y=0.23;
+  const headG=new THREE.Group();headG.name='head';headG.position.y=0.25;headG.scale.setScalar(1.22); // anime: bigger head
   // Skull — slightly flattened
   const skull=new THREE.Mesh(new THREE.SphereGeometry(0.115,9,7),skinM);
   skull.scale.y=1.08;skull.position.y=0.115;headG.add(skull);
@@ -1276,57 +1416,55 @@ function createColonistMesh(c){
 
   g.position.set(c.x/TILE,0,c.y/TILE);
   unitGroup.add(g);colonistMeshes.set(c.id,g);
+  addOutlines(g,1.06);
 }
 function createRaiderMesh(r){
   const g=new THREE.Group();
-  const armorMat=new THREE.MeshStandardMaterial({roughness:0.8,metalness:0.05,color:0x3a2020});
-  const darkMat=new THREE.MeshStandardMaterial({roughness:0.8,metalness:0.05,color:0x1a0808});
-  const metalMat=new THREE.MeshStandardMaterial({roughness:0.8,metalness:0.05,color:0x505058});
-  const skinMat=new THREE.MeshStandardMaterial({roughness:0.8,metalness:0.05,color:0x6a4030});
+  // All toon materials — dark, threatening colour scheme
+  const armorM=sMat(0x4a2828);const darkM=sMat(0x2a1010);
+  const metalM=sMat(0x6068a0);const skinM2=sMat(0x7a4a38);
+  const woodM2=sMat(0x6a3810);const redM=sMat(0xc02020);
   // Boots
   [[-0.08,0.07],[0.08,0.07]].forEach(([x,y])=>{
-    const boot=new THREE.Mesh(new THREE.BoxGeometry(0.1,0.09,0.14),darkMat);
-    boot.position.set(x,y,0.02);g.add(boot);
+    const boot=new THREE.Mesh(new THREE.BoxGeometry(0.10,0.09,0.14),darkM);boot.position.set(x,y,0.02);g.add(boot);
   });
   // Legs
   [[-0.08,0.2],[0.08,0.2]].forEach(([x,y])=>{
-    const leg=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.06,0.2,6),armorMat);
-    leg.position.set(x,y,0);g.add(leg);
+    const leg=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.06,0.2,6),armorM);leg.position.set(x,y,0);g.add(leg);
   });
-  // Torso (armored)
-  const torso=new THREE.Mesh(new THREE.BoxGeometry(0.28,0.24,0.16),armorMat);
-  torso.position.y=0.42;g.add(torso);
+  // Armored torso — slightly wider for menace
+  const torso=new THREE.Mesh(new THREE.BoxGeometry(0.30,0.26,0.17),armorM);torso.position.y=0.43;g.add(torso);
+  // Chest plate stripe
+  bx(g,0.32,0.28,0.04,0x383040,0,0.43,0.09);
   // Shoulder pads
-  [[-0.18,0.5],[0.18,0.5]].forEach(([x,y])=>{
-    const pad=new THREE.Mesh(new THREE.SphereGeometry(0.06,6,4),metalMat);
-    pad.position.set(x,y,0);g.add(pad);
+  [[-0.20,0.52],[0.20,0.52]].forEach(([x,y])=>{
+    const pad=new THREE.Mesh(new THREE.SphereGeometry(0.07,7,5),metalM);pad.position.set(x,y,0);g.add(pad);
   });
   // Arms
-  [[-0.18,0.36],[0.18,0.36]].forEach(([x,y])=>{
-    const arm=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.045,0.22,6),armorMat);
-    arm.position.set(x,y,0);g.add(arm);
+  [[-0.19,0.37],[0.19,0.37]].forEach(([x,y])=>{
+    const arm=new THREE.Mesh(new THREE.CylinderGeometry(0.044,0.050,0.23,6),armorM);arm.position.set(x,y,0);g.add(arm);
   });
-  // Head
-  const head=new THREE.Mesh(new THREE.SphereGeometry(0.13,8,6),skinMat);
-  head.position.y=0.62;g.add(head);
-  // Helmet
-  const helm=new THREE.Mesh(new THREE.SphereGeometry(0.145,8,6,0,Math.PI*2,0,Math.PI*0.6),metalMat);
-  helm.position.y=0.66;g.add(helm);
-  const helmSpike=new THREE.Mesh(new THREE.ConeGeometry(0.03,0.15,6),metalMat);
-  helmSpike.position.y=0.8;g.add(helmSpike);
-  // Weapon — mace/axe
-  const wHandle=new THREE.Mesh(new THREE.CylinderGeometry(0.018,0.018,0.35,4),new THREE.MeshStandardMaterial({roughness:0.8,metalness:0.05,color:0x5a3010}));
-  wHandle.rotation.z=0.5;wHandle.position.set(0.26,0.44,0);g.add(wHandle);
-  const wHead=new THREE.Mesh(new THREE.DodecahedronGeometry(0.06,0),metalMat);
-  wHead.position.set(0.36,0.56,0);g.add(wHead);
-  // Shield on left arm
-  const shield=new THREE.Mesh(new THREE.BoxGeometry(0.04,0.2,0.18),new THREE.MeshStandardMaterial({roughness:0.8,metalness:0.05,color:0x5a2010}));
-  shield.position.set(-0.22,0.38,0);g.add(shield);
-  const shieldBoss=new THREE.Mesh(new THREE.SphereGeometry(0.035,6,4),metalMat);
-  shieldBoss.position.set(-0.24,0.38,0);g.add(shieldBoss);
+  // Head (bigger — anime proportions)
+  const rhead=new THREE.Mesh(new THREE.SphereGeometry(0.145,9,7),skinM2);rhead.position.y=0.66;g.add(rhead);
+  // Menacing full helmet
+  const helm=new THREE.Mesh(new THREE.SphereGeometry(0.162,9,7,0,Math.PI*2,0,Math.PI*0.65),metalM);helm.position.y=0.69;g.add(helm);
+  const helmBrim=new THREE.Mesh(new THREE.CylinderGeometry(0.18,0.17,0.03,10),metalM);helmBrim.position.y=0.63;g.add(helmBrim);
+  const helmSpike=new THREE.Mesh(new THREE.ConeGeometry(0.032,0.17,6),metalM);helmSpike.position.y=0.85;g.add(helmSpike);
+  // Eye slits — eerie glow colour
+  bx(g,0.10,0.04,0.02,0xff3020,0,0.72,0.15);
+  // Weapon — battle axe handle + head
+  const wHandle=new THREE.Mesh(new THREE.CylinderGeometry(0.019,0.019,0.38,5),woodM2);
+  wHandle.rotation.z=0.52;wHandle.position.set(0.27,0.46,0);g.add(wHandle);
+  const wHead=new THREE.Mesh(new THREE.DodecahedronGeometry(0.07,0),metalM);wHead.position.set(0.37,0.58,0);g.add(wHead);
+  // Shield
+  const shield=new THREE.Mesh(new THREE.BoxGeometry(0.05,0.22,0.19),redM);shield.position.set(-0.23,0.40,0);g.add(shield);
+  const shieldBoss=new THREE.Mesh(new THREE.SphereGeometry(0.04,6,4),metalM);shieldBoss.position.set(-0.26,0.40,0);g.add(shieldBoss);
+  // Red tunic stripe below armour
+  bx(g,0.28,0.10,0.18,0x881818,0,0.30,0);
 
   g.position.set(r.x/TILE,0,r.y/TILE);
   unitGroup.add(g);raiderMeshes.set(r.id,g);
+  addOutlines(g,1.055);
 }
 function syncUnits(){
   // colonists
