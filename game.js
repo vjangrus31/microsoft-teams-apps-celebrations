@@ -33,6 +33,48 @@ const TRAITS = {
 };
 const TRAIT_KEYS=Object.keys(TRAITS);
 
+const TECHS = {
+  // Tier 1
+  improved_tools:{ tier:1, icon:'⚒', name:'Improved Tools',
+    desc:'Woodcutters & quarries produce 30% more.',
+    cost:{wood:10,stone:5}, requires:[] },
+  agriculture:  { tier:1, icon:'🌱', name:'Agriculture',
+    desc:'Farms yield 35% more food.',
+    cost:{wood:8,food:8}, requires:[] },
+  masonry:      { tier:1, icon:'🏛', name:'Masonry',
+    desc:'Walls gain +80 max HP.',
+    cost:{stone:15}, requires:[] },
+  herbalism:    { tier:1, icon:'🌿', name:'Herbalism',
+    desc:'Colonists slowly regenerate 1 HP every 10s.',
+    cost:{food:12,wood:4}, requires:[] },
+  // Tier 2
+  advanced_tools:{ tier:2, icon:'🔧', name:'Advanced Tools',
+    desc:'All resource production +20% additional.',
+    cost:{wood:18,stone:12}, requires:['improved_tools'] },
+  crop_rotation:{ tier:2, icon:'🌾', name:'Crop Rotation',
+    desc:'Winter food penalty halved (0.4→0.7×).',
+    cost:{food:15,wood:8}, requires:['agriculture'] },
+  fortification:{ tier:2, icon:'🛡', name:'Fortification',
+    desc:'Tower attack range +2 tiles, damage +8.',
+    cost:{stone:20,wood:5}, requires:['masonry'] },
+  field_medicine:{ tier:2, icon:'💊', name:'Field Medicine',
+    desc:'Colonist max HP +20. Soldiers deal +4 damage.',
+    cost:{food:15,stone:5}, requires:['herbalism'] },
+  // Tier 3
+  sawmill:      { tier:3, icon:'🪚', name:'Sawmill',
+    desc:'Wood production doubled.',
+    cost:{wood:25,stone:15}, requires:['advanced_tools'] },
+  irrigation:   { tier:3, icon:'💧', name:'Irrigation',
+    desc:'Farms produce at full rate in all seasons.',
+    cost:{food:20,stone:15}, requires:['crop_rotation'] },
+  ballista:     { tier:3, icon:'🎯', name:'Ballista',
+    desc:'Towers fire twice per attack cycle.',
+    cost:{stone:30,wood:15}, requires:['fortification'] },
+  veteran_training:{ tier:3, icon:'🗡', name:'Veteran Training',
+    desc:'Soldiers: +4 damage, +15 max HP.',
+    cost:{food:25,wood:10}, requires:['field_medicine'] },
+};
+
 const EVENTS = [
   { id:'trader',    title:'Merchant Caravan',   body:'A trader offers goods.',
     color:'#c8a84a', choices:[
@@ -84,6 +126,7 @@ let state = {
   isDragging:false, dragStart:null,
   timeOfDay:0,
   _harshWinter:0,
+  techs:[],
 };
 
 // ============================================================
@@ -136,7 +179,7 @@ function spawnColonist() {
     id:state.colonists.length, name:pickName(),
     x:cc*TILE+TILE/2+(Math.random()-0.5)*40,
     y:cr*TILE+TILE/2+(Math.random()-0.5)*40,
-    job:null, hunger:100, hp:30, maxHp:30, starving:0,
+    job:null, hunger:100, hp:30+techBonuses.maxHpBonus, maxHp:30+techBonuses.maxHpBonus, starving:0,
     color:`hsl(${Math.floor(Math.random()*360)},60%,70%)`,
     blinkTimer:0, fleeing:false,
     path:[], pathTarget:null, pathCooldown:0, attackCooldown:0,
@@ -346,20 +389,30 @@ function updateTowers() {
     const def=BUILDINGS.tower;
     if(b.attackTimer<def.attackRate)return;
     b.attackTimer=0;
-    const bx=(b.c+0.5)*TILE,by=(b.r+0.5)*TILE,range=def.attackRange*TILE;
+    const bx=(b.c+0.5)*TILE,by=(b.r+0.5)*TILE,range=(def.attackRange+techBonuses.towerRange)*TILE;
+    const tdmg=def.attackDamage+techBonuses.towerDmg;
     let target=null,bestDist=range;
     state.raiders.forEach(r=>{
       const dx=r.x-bx,dy=r.y-by,d=Math.sqrt(dx*dx+dy*dy);
       if(d<bestDist){bestDist=d;target=r;}
     });
     if(target){
-      target.hp-=def.attackDamage;
-      addFloat(target.x/TILE,target.y/TILE,`-${def.attackDamage}`,'#ffdd44');
+      target.hp-=tdmg;
+      addFloat(target.x/TILE,target.y/TILE,`-${tdmg}`,'#ffdd44');
       if(target.hp<=0){
         const m=raiderMeshes.get(target.id);
         if(m){unitGroup.remove(m);raiderMeshes.delete(target.id);}
         state.raiders=state.raiders.filter(r=>r.id!==target.id);
         log('⚔ Raider slain by tower');
+      }
+      // Ballista: fire at a second target
+      if(techBonuses.towerDouble){
+        let t2=null,d2=range;
+        state.raiders.forEach(r=>{if(r===target)return;const dx=r.x-bx,dy=r.y-by,d=Math.sqrt(dx*dx+dy*dy);if(d<d2){d2=d;t2=r;}});
+        if(t2){
+          t2.hp-=tdmg;addFloat(t2.x/TILE,t2.y/TILE,`-${tdmg}`,'#ffdd44');
+          if(t2.hp<=0){const m=raiderMeshes.get(t2.id);if(m){unitGroup.remove(m);raiderMeshes.delete(t2.id);}state.raiders=state.raiders.filter(r=>r.id!==t2.id);}
+        }
       }
     }
   });
@@ -557,7 +610,14 @@ function tick(){
     const def=BUILDINGS[b.type];
     if(!def.produces||b.workers===0)return;
     let rate=def.rate*b.workers;
-    if(def.produces==='food')rate*=FOOD_SEASON_MULT[state.season];
+    if(def.produces==='food'){
+      let sm=FOOD_SEASON_MULT[state.season];
+      if(techBonuses.allSeasonFarm)sm=1.0;
+      else if(techBonuses.cropRotation)sm=Math.max(sm,0.7);
+      rate*=sm*techBonuses.foodMult;
+    }
+    if(def.produces==='wood')rate*=techBonuses.woodMult;
+    if(def.produces==='stone')rate*=techBonuses.stoneMult;
     state.resources[def.produces]=(state.resources[def.produces]||0)+rate;
     if(b.type==='woodcutter'||b.type==='quarry'){
       if(!b.depletionAccum)b.depletionAccum=0;
@@ -599,7 +659,9 @@ function tick(){
   state.colonists.forEach(c=>{
     if(c.attackCooldown>0){c.attackCooldown--;return;}
     const isSoldier=c.job!==null&&state.buildings[c.job]?.type==='barracks';
-    const range=isSoldier?TILE*2.5:TILE*1.2,dmg=isSoldier?8:4,cooldown=isSoldier?70:110;
+    const range=isSoldier?TILE*2.5:TILE*1.2;
+    const dmg=isSoldier?(8+techBonuses.soldierDmg+(techBonuses.veteranBonus?4:0)):4;
+    const cooldown=isSoldier?(techBonuses.veteranBonus?55:70):110;
     let nearest=null,bestDist=range;
     state.raiders.forEach(r=>{const dx=r.x-c.x,dy=r.y-c.y,d=Math.sqrt(dx*dx+dy*dy);if(d<bestDist){bestDist=d;nearest=r;}});
     if(nearest){
@@ -669,6 +731,7 @@ function tick(){
       showEvent(ev);
     }
     if(state._harshWinter>0)state._harshWinter--;
+    if(techBonuses.hpRegen&&t%50===0)state.colonists.forEach(c=>{if(c.hp<c.maxHp)c.hp=Math.min(c.maxHp,c.hp+1);});
   }
   if(t%3===0)updateDayNight();
   checkWinLose();
@@ -1693,6 +1756,8 @@ function loadGame(){
     if(!raw){log('No save found.');return;}
     const loaded=JSON.parse(raw);
     Object.assign(state,loaded);
+    if(!state.techs)state.techs=[];
+    rebuildTechBonuses();
     state.floats=[];
     // Rebuild all meshes
     buildingMeshes.forEach(g=>buildingGroup.remove(g));buildingMeshes.clear();
@@ -1832,6 +1897,11 @@ function initInput(){
     if(e.key==='s'||e.key==='S')saveGame();
     if(e.key==='l'||e.key==='L')loadGame();
     if(e.key==='Escape'){setPlacing(null);state.selectedColonist=null;}
+    if(e.key==='r'||e.key==='R'){
+      const m=document.getElementById('tech-modal');
+      if(m.style.display==='none'||!m.style.display){openTechTree();}
+      else m.style.display='none';
+    }
   });
 
   // Build buttons
@@ -1864,6 +1934,26 @@ function clampCameraTarget(){
 function resetGame(){
   // Reload page for cleanest reset
   location.reload();
+}
+// ── Tech Bonuses ─────────────────────────────────────────────────────────────
+let techBonuses={woodMult:1,stoneMult:1,foodMult:1,wallHpBonus:0,towerRange:0,towerDmg:0,towerDouble:false,hpRegen:false,maxHpBonus:0,soldierDmg:0,veteranBonus:false,cropRotation:false,allSeasonFarm:false};
+function rebuildTechBonuses(){
+  const u=new Set(state.techs||[]);
+  techBonuses={
+    woodMult:(u.has('improved_tools')?1.3:1)*(u.has('advanced_tools')?1.2:1)*(u.has('sawmill')?2:1),
+    stoneMult:(u.has('improved_tools')?1.3:1)*(u.has('advanced_tools')?1.2:1),
+    foodMult:(u.has('agriculture')?1.35:1)*(u.has('advanced_tools')?1.2:1),
+    wallHpBonus:u.has('masonry')?80:0,
+    towerRange:u.has('fortification')?2:0,
+    towerDmg:u.has('fortification')?8:0,
+    towerDouble:u.has('ballista'),
+    hpRegen:u.has('herbalism'),
+    maxHpBonus:u.has('field_medicine')?20:0,
+    soldierDmg:u.has('field_medicine')?4:0,
+    veteranBonus:u.has('veteran_training'),
+    cropRotation:u.has('crop_rotation'),
+    allSeasonFarm:u.has('irrigation'),
+  };
 }
 // ── Sound Engine (Web Audio API — no files needed) ────────────────────────────
 let audioCtx=null;
@@ -1944,6 +2034,81 @@ function startAmbient(){
   }catch(e){}
 }
 
+// ── Tech Tree ─────────────────────────────────────────────────────────────────
+function unlockTech(id){
+  const tech=TECHS[id];if(!tech)return;
+  if((state.techs||[]).includes(id)){log('Already researched.');return;}
+  for(const req of tech.requires){if(!(state.techs||[]).includes(req)){log(`Requires ${TECHS[req].name} first.`);return;}}
+  const res=state.resources;
+  for(const[k,v]of Object.entries(tech.cost)){if((res[k]||0)<v){log(`Not enough ${k}!`);return;}}
+  for(const[k,v]of Object.entries(tech.cost))res[k]-=v;
+  if(!state.techs)state.techs=[];
+  state.techs.push(id);
+  rebuildTechBonuses();
+  log(`🔬 Researched: ${tech.name}!`);
+  soundBuildComplete();
+  // Immediate effects
+  if(id==='masonry'){
+    const newMax=BUILDINGS.wall.maxHp+techBonuses.wallHpBonus;
+    state.buildings.filter(b=>b.type==='wall'&&b.hp>0).forEach(b=>{b.maxHp=newMax;b.hp=Math.min(b.hp+80,newMax);});
+  }
+  if(id==='field_medicine'||id==='veteran_training'){
+    state.colonists.forEach(c=>{
+      const bonus=techBonuses.maxHpBonus+(techBonuses.veteranBonus&&c.job!==null&&state.buildings[c.job]?.type==='barracks'?15:0);
+      const newMax=30+bonus+(c.traits?.includes('brave')?Math.round((30+bonus)*0.4):0);
+      if(newMax>c.maxHp){c.hp+=newMax-c.maxHp;c.maxHp=newMax;}
+    });
+  }
+  updateResourceUI();
+  renderTechTree();
+}
+
+function renderTechTree(){
+  const container=document.getElementById('tech-tree-content');
+  if(!container)return;
+  const unlocked=new Set(state.techs||[]);
+  let html='';
+  [1,2,3].forEach(tier=>{
+    const tlist=Object.entries(TECHS).filter(([,t])=>t.tier===tier);
+    html+=`<div style="margin-bottom:18px">`;
+    html+=`<div style="font-size:9px;text-transform:uppercase;letter-spacing:2.5px;color:#2a4a68;margin-bottom:8px;font-weight:500">── Tier ${tier} ──</div>`;
+    html+=`<div style="display:flex;gap:10px;flex-wrap:wrap">`;
+    tlist.forEach(([id,tech])=>{
+      const isUnlocked=unlocked.has(id);
+      const reqsMet=tech.requires.every(r=>unlocked.has(r));
+      const canAfford=Object.entries(tech.cost).every(([k,v])=>(state.resources[k]||0)>=v);
+      const available=reqsMet&&!isUnlocked;
+      const costStr=Object.entries(tech.cost).map(([k,v])=>`${v}${k==='wood'?'🪵':k==='stone'?'🪨':'🌾'}`).join(' ');
+      const reqStr=tech.requires.map(r=>TECHS[r].name).join(', ');
+      const borderCol=isUnlocked?'#20a060':available&&canAfford?'#2a6a9a':'#1a2d45';
+      const bgCol=isUnlocked?'rgba(20,80,50,0.25)':available?'rgba(20,50,80,0.2)':'rgba(8,14,25,0.6)';
+      const nameCol=isUnlocked?'#60e0a0':available?'#90b8d8':'#304858';
+      html+=`<div onclick="unlockTech('${id}')" style="width:162px;background:${bgCol};border:1px solid ${borderCol};border-radius:5px;padding:10px 11px;cursor:${available?'pointer':'default'};transition:border-color 0.15s" onmouseover="if(${available?1:0})this.style.borderColor='#3a8aca'" onmouseout="this.style.borderColor='${borderCol}'">`;
+      html+=`<div style="font-size:20px;margin-bottom:5px">${tech.icon}</div>`;
+      html+=`<div style="font-weight:600;font-size:12px;color:${nameCol};margin-bottom:4px">${tech.name}</div>`;
+      html+=`<div style="font-size:10px;color:#3a5870;line-height:1.5;margin-bottom:7px">${tech.desc}</div>`;
+      if(isUnlocked){html+=`<div style="font-size:10px;color:#40b060;font-weight:500">✓ Researched</div>`;}
+      else if(!reqsMet){html+=`<div style="font-size:10px;color:#2a3848">🔒 ${reqStr}</div>`;}
+      else{html+=`<div style="font-size:10px;color:${canAfford?'#c8a84a':'#884040'}">${costStr}</div>`;}
+      html+=`</div>`;
+    });
+    html+=`</div></div>`;
+  });
+  container.innerHTML=html;
+}
+
+function openTechTree(){
+  if(!state.techs)state.techs=[];
+  renderTechTree();
+  document.getElementById('tech-modal').style.display='flex';
+}
+function initTechModal(){
+  const closeBtn=document.getElementById('tech-close');
+  if(closeBtn)closeBtn.addEventListener('click',()=>{document.getElementById('tech-modal').style.display='none';});
+  const resBtn=document.getElementById('btn-research');
+  if(resBtn)resBtn.addEventListener('click',openTechTree);
+}
+
 // ── Boot ──────────────────────────────────────────────────────────────────────
 function init(){
   generateMap();
@@ -1951,6 +2116,8 @@ function init(){
   initInput();
   initFloats();
   initAudio();
+  rebuildTechBonuses();
+  initTechModal();
   updateResourceUI();
   log('Colony founded. Build a house to attract settlers.');
   // Spawn initial colonist

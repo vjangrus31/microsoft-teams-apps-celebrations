@@ -188,8 +188,9 @@
       </div>
 
       <div id="save-row">
-        <button id="btn-save">💾 Save (S)</button>
-        <button id="btn-load">📂 Load (L)</button>
+        <button id="btn-save">💾 Save</button>
+        <button id="btn-load">📂 Load</button>
+        <button id="btn-research">🔬 Research (R)</button>
       </div>
     </div>
 
@@ -217,6 +218,17 @@
       <div id="overlay-title" style="font-family:'Cinzel',serif;font-size:26px;color:#c8a84a;margin-bottom:14px;"></div>
       <div id="overlay-body" style="font-size:14px;color:#a0b8d0;line-height:1.9;margin-bottom:28px;"></div>
       <button id="overlay-btn" style="padding:10px 32px;background:#1e3a5a;color:#d0e8f8;border:1px solid #2a6a9a;font-size:14px;border-radius:4px;cursor:pointer;font-family:inherit;letter-spacing:0.04em;"></button>
+    </div>
+  </div>
+
+  <!-- Tech Tree Modal -->
+  <div id="tech-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.82);z-index:300;align-items:center;justify-content:center;">
+    <div style="background:#0a1018;border:1px solid #2a4a6a;border-radius:8px;padding:24px 28px;max-width:800px;width:96%;font-family:'Inter',sans-serif;max-height:88vh;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#1a3050 transparent;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <div style="font-family:'Cinzel',serif;font-size:17px;color:#c8a84a;letter-spacing:1.5px;text-shadow:0 0 12px rgba(200,168,74,0.4)">🔬 Research</div>
+        <button id="tech-close" style="background:rgba(255,255,255,0.04);border:1px solid #2a4a6a;color:#5a7a90;padding:4px 12px;border-radius:3px;cursor:pointer;font-family:inherit;font-size:12px;transition:all 0.12s">✕ Close</button>
+      </div>
+      <div id="tech-tree-content"></div>
     </div>
   </div>
 
