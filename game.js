@@ -23,6 +23,50 @@ const SEASON_NAMES  = ['Spring','Summer','Autumn','Winter'];
 const SEASON_COLORS = ['#4a9a4a','#3a8a3a','#b06020','#b0c8d8'];
 const FOOD_SEASON_MULT = [1.0,1.2,0.8,0.4];
 
+const TRAITS = {
+  swift:      { label:'Swift',       desc:'+35% move speed',        color:'#60d0ff' },
+  strong:     { label:'Strong',      desc:'+50% build/chop speed',  color:'#ff9040' },
+  green_thumb:{ label:'Green Thumb', desc:'+50% farm yield',        color:'#60d840' },
+  brave:      { label:'Brave',       desc:'+40% HP, fights back',   color:'#ffd040' },
+  hungry:     { label:'Hungry',      desc:'Eats 2× food',           color:'#ff6060' },
+  lucky:      { label:'Lucky',       desc:'Chance bonus resources', color:'#d060ff' },
+};
+const TRAIT_KEYS=Object.keys(TRAITS);
+
+const EVENTS = [
+  { id:'trader',    title:'Merchant Caravan',   body:'A trader offers goods.',
+    color:'#c8a84a', choices:[
+      { label:'Buy food (10 wood)',   fn:s=>{ if(s.resources.wood>=10){s.resources.wood-=10;s.resources.food+=30;return'Traded 10 wood for 30 food.';}return'Not enough wood.';} },
+      { label:'Buy stone (10 wood)',  fn:s=>{ if(s.resources.wood>=10){s.resources.wood-=10;s.resources.stone+=20;return'Traded 10 wood for 20 stone.';}return'Not enough wood.';} },
+      { label:'Send them away',       fn:s=>'The merchant moves on.' },
+    ]},
+  { id:'wanderers', title:'Wandering Family',   body:'A family arrives seeking shelter.',
+    color:'#60d0a0', choices:[
+      { label:'Welcome them',  fn:s=>{ for(let i=0;i<2;i++)spawnColonist();return'2 new colonists joined!';} },
+      { label:'Turn them away',fn:s=>'They move on reluctantly.' },
+    ]},
+  { id:'winter',    title:'Harsh Winter',       body:'A bitter frost grips the land. Food stores dwindle faster.',
+    color:'#90c0e0', choices:[
+      { label:'Ration food',  fn:s=>{ s._harshWinter=120;return'Food consumption doubled for 24 days.';} },
+      { label:'Push through', fn:s=>{ s._harshWinter=120;return'The cold will be hard on everyone.';} },
+    ]},
+  { id:'harvest',   title:'Bumper Harvest',     body:'Exceptional growing conditions bless your farms!',
+    color:'#c0d040', choices:[
+      { label:'Celebrate!',   fn:s=>{ s.resources.food+=50;return'+50 food from the harvest bounty!';} },
+    ]},
+  { id:'wolves',    title:'Wolf Pack',          body:'A pack of wolves has been spotted near the settlement!',
+    color:'#e06030', choices:[
+      { label:'Organize a hunt', fn:s=>{ const wolves=2+Math.floor(s.day/20); for(let i=0;i<wolves;i++) s.raiders.push({id:Date.now()+i,x:(Math.random()<0.5?1:COLS-2)*TILE,y:Math.floor(Math.random()*ROWS)*TILE,hp:15,maxHp:15,attackCooldown:0,blinkTimer:0,_wolf:true}); return`${wolves} wolves attacking!`;} },
+      { label:'Reinforce walls', fn:s=>{ s.nextRaidIn+=200;return'Wolves kept at bay for now.';} },
+    ]},
+  { id:'sickness',  title:'Illness Spreads',    body:'A sickness moves through the settlement.',
+    color:'#90a840', choices:[
+      { label:'Quarantine',   fn:s=>{ const c=s.colonists[Math.floor(Math.random()*s.colonists.length)];if(c){c.hp=Math.max(1,Math.round(c.hp*0.4));return`${c.name} is gravely ill (HP: ${c.hp}).`;}return'No one fell ill.';} },
+      { label:'Pray',         fn:s=>{ const c=s.colonists[Math.floor(Math.random()*s.colonists.length)];if(c){c.hp=Math.max(1,Math.round(c.hp*0.6));return`${c.name} is weakened.`;}return'Everyone survives.';} },
+    ]},
+];
+let _pendingEvent=null;
+
 // ============================================================
 // State
 // ============================================================
@@ -38,6 +82,8 @@ let state = {
   gameOver:false, wonShown:false,
   camTarget:{x:COLS/2, z:ROWS/2}, camZoom:18,
   isDragging:false, dragStart:null,
+  timeOfDay:0,
+  _harshWinter:0,
 };
 
 // ============================================================
@@ -95,6 +141,16 @@ function spawnColonist() {
     blinkTimer:0, fleeing:false,
     path:[], pathTarget:null, pathCooldown:0, attackCooldown:0,
   });
+  // Assign 1-2 random traits (no duplicates)
+  const c=state.colonists[state.colonists.length-1];
+  const numTraits=Math.random()<0.3?2:1;
+  c.traits=[];
+  const pool=[...TRAIT_KEYS];
+  for(let i=0;i<numTraits;i++){
+    const idx=Math.floor(Math.random()*pool.length);
+    c.traits.push(pool.splice(idx,1)[0]);
+  }
+  if(c.traits.includes('brave'))c.maxHp=Math.round(c.maxHp*1.4),c.hp=c.maxHp;
   state.population++;
   updateResourceUI();
 }
@@ -232,10 +288,14 @@ function showColonistInfo(c) {
     if(b.constructing)jobName=`Building ${BUILDINGS[b.type].name}`;
     else jobName=BUILDINGS[b.type].name;
   }
-  document.getElementById('info-content').innerHTML=
-    `<b>${c.name}</b>${b?.type==='barracks'?' ⚔':''}<br>`+
+  let html=`<b>${c.name}</b>${b?.type==='barracks'?' ⚔':''}<br>`+
     `Job: ${jobName}<br>Hunger: ${Math.floor(c.hunger)}/100<br>HP: ${c.hp}/${c.maxHp}<br><br>`+
     `<span style="color:#7ec8e3">Click a work building<br>to assign, or open<br>ground to unassign.</span>`;
+  if(c.traits?.length){
+    const traitHtml=c.traits.map(t=>`<span style="color:${TRAITS[t].color};font-size:10px;background:rgba(255,255,255,0.06);padding:1px 5px;border-radius:3px;margin-right:3px">${TRAITS[t].label}</span>`).join('');
+    html+=`<br><div style="margin-top:4px">${traitHtml}</div>`;
+  }
+  document.getElementById('info-content').innerHTML=html;
 }
 
 function updateTowers() {
@@ -407,15 +467,15 @@ function tick(){
     if(!b.constructing)return;
     const sz=BUILDINGS[b.type].size;
     const bx=(b.c+sz/2)*TILE, by=(b.r+sz/2)*TILE;
-    // Count builders in range (assigned to this building)
-    let builders=0;
+    // Count builders in range (assigned to this building), applying Strong trait
+    let buildPower=0;
     state.colonists.forEach(c=>{
       if(c.job!==b.id)return;
-      const dx=c.x-bx, dy=c.y-by, d=Math.sqrt(dx*dx+dy*dy);
-      if(d<TILE*1.8)builders++;
+      const dx=c.x-bx,dy=c.y-by,d=Math.sqrt(dx*dx+dy*dy);
+      if(d<TILE*1.8)buildPower+=(c.traits?.includes('strong')?1.5:1);
     });
-    if(builders===0)return; // no one working → no progress
-    b.progress+=builders; // more builders = faster
+    if(buildPower===0)return; // no one working → no progress
+    b.progress+=buildPower; // more builders = faster
     if(b.progress>=120){
       b.constructing=false;b.active=true;b.progress=120;
       log(`✅ ${BUILDINGS[b.type].name} complete`);
@@ -462,7 +522,7 @@ function tick(){
   if(t%20===0){
     const toKill=[];
     state.colonists.forEach(c=>{
-      c.hunger-=2;
+      c.hunger-=(c.traits?.includes('hungry')?4:2)*(state._harshWinter>0?2:1);
       if(c.hunger<=0){
         c.hunger=0;
         if(state.resources.food>=1){state.resources.food-=1;c.hunger=Math.min(100,c.hunger+60);c.starving=0;}
@@ -522,11 +582,13 @@ function tick(){
     if(c.path.length>0){
       const next=c.path[0];const tx=(next.c+0.5)*TILE,ty=(next.r+0.5)*TILE;
       const dx=tx-c.x,dy=ty-c.y,dist=Math.sqrt(dx*dx+dy*dy);
-      if(dist<3)c.path.shift();else{c.x+=(dx/dist)*0.8;c.y+=(dy/dist)*0.8;}
+      const spd=0.8*(c.traits?.includes('swift')?1.35:1);
+      if(dist<3)c.path.shift();else{c.x+=(dx/dist)*spd;c.y+=(dy/dist)*spd;}
     } else if(c.pathTarget&&c.job!==null){
       const tx=(c.pathTarget.c+0.5)*TILE,ty=(c.pathTarget.r+0.5)*TILE;
       const dx=tx-c.x,dy=ty-c.y,dist=Math.sqrt(dx*dx+dy*dy);
-      if(dist>3){c.x+=(dx/dist)*0.8;c.y+=(dy/dist)*0.8;}
+      const spd=0.8*(c.traits?.includes('swift')?1.35:1);
+      if(dist>3){c.x+=(dx/dist)*spd;c.y+=(dy/dist)*spd;}
     }
     c.blinkTimer=(c.blinkTimer+1)%60;
   });
@@ -541,17 +603,46 @@ function tick(){
     document.getElementById('day-label').textContent=`Day ${state.day}`;
     document.getElementById('season-label').textContent=SEASON_NAMES[state.season];
     document.getElementById('season-label').style.color=SEASON_COLORS[state.season];
+    if(state.day>3&&state.day%7===0&&!_pendingEvent&&Math.random()<0.55){
+      const ev=EVENTS[Math.floor(Math.random()*EVENTS.length)];
+      showEvent(ev);
+    }
+    if(state._harshWinter>0)state._harshWinter--;
   }
+  if(t%3===0)updateDayNight();
   checkWinLose();
   state.resources.wood=Math.max(0,Math.min(9999,state.resources.wood));
   state.resources.stone=Math.max(0,Math.min(9999,state.resources.stone));
   state.resources.food=Math.max(0,Math.min(9999,state.resources.food));
 }
 
+function showEvent(ev){
+  _pendingEvent=ev;
+  document.getElementById('event-title').textContent=ev.title;
+  document.getElementById('event-title').style.color=ev.color;
+  document.getElementById('event-body').textContent=ev.body;
+  const btnContainer=document.getElementById('event-choices');
+  btnContainer.innerHTML='';
+  ev.choices.forEach(ch=>{
+    const btn=document.createElement('button');
+    btn.className='event-btn';btn.textContent=ch.label;
+    btn.addEventListener('click',()=>{
+      const result=ch.fn(state);
+      log(`📜 ${result}`);
+      updateResourceUI();
+      document.getElementById('event-modal').style.display='none';
+      _pendingEvent=null;
+    });
+    btnContainer.appendChild(btn);
+  });
+  document.getElementById('event-modal').style.display='flex';
+}
+
 // ============================================================
 // THREE.JS — Scene setup
 // ============================================================
 let renderer,scene,camera,groundPlane;
+let sunLight,hemiLight,fillLight;
 let terrainGroup,decorGroup,buildingGroup,unitGroup;
 let terrainMeshes=[],decorGroups=[];
 let buildingMeshes=new Map(),colonistMeshes=new Map(),raiderMeshes=new Map();
@@ -581,7 +672,8 @@ function initThree(){
   scene.fog=new THREE.FogExp2(SKY[state.season],0.016);
   setupCamera();
   // Hemisphere: sky blue top, warm ground bounce bottom
-  scene.add(new THREE.HemisphereLight(0x90b8d8,0x4a3820,0.7));
+  hemiLight=new THREE.HemisphereLight(0x90b8d8,0x4a3820,0.7);
+  scene.add(hemiLight);
   // Key sun light
   const sun=new THREE.DirectionalLight(0xfff4d0,1.3);
   sun.position.set(25,38,12);sun.castShadow=true;
@@ -589,9 +681,11 @@ function initThree(){
   const sc=sun.shadow.camera;sc.left=-60;sc.right=60;sc.top=50;sc.bottom=-50;sc.near=1;sc.far=180;
   sun.shadow.bias=-0.0005;
   scene.add(sun);
+  sunLight=sun;
   // Soft fill from opposite side
   const fill=new THREE.DirectionalLight(0x8090c0,0.3);
   fill.position.set(-15,20,-10);scene.add(fill);
+  fillLight=fill;
   terrainGroup=new THREE.Group();scene.add(terrainGroup);
   decorGroup=new THREE.Group();scene.add(decorGroup);
   buildingGroup=new THREE.Group();scene.add(buildingGroup);
@@ -659,6 +753,30 @@ function tickCamera(){
   if(Math.abs(dz)>0.001){camCurrent.z+=dz*lz;changed=true;}
   if(Math.abs(dZoom)>0.01){camZoomCurrent+=dZoom*lzoom;changed=true;}
   if(changed){applyCameraPos();updateCameraFrustum();}
+}
+
+function updateDayNight(){
+  state.timeOfDay=(state.tick%(TICKS_PER_DAY))/TICKS_PER_DAY;
+  const t=state.timeOfDay;
+  const dayT=Math.max(0,Math.min(1,(t-0.1)/0.75));
+  const sunHeight=Math.sin(dayT*Math.PI);
+
+  let skyCol;
+  if(t<0.1)      skyCol=new THREE.Color(0x1a0a1e).lerp(new THREE.Color(0xff7030),t/0.1);
+  else if(t<0.2) skyCol=new THREE.Color(0xff7030).lerp(new THREE.Color(SKY[state.season]),(t-0.1)/0.1);
+  else if(t<0.75)skyCol=new THREE.Color(SKY[state.season]);
+  else if(t<0.85)skyCol=new THREE.Color(SKY[state.season]).lerp(new THREE.Color(0xcc4010),(t-0.75)/0.1);
+  else           skyCol=new THREE.Color(0xcc4010).lerp(new THREE.Color(0x06050e),(t-0.85)/0.15);
+
+  if(scene)scene.background=skyCol;
+  if(scene&&scene.fog)scene.fog.color.copy(skyCol);
+
+  if(sunLight){
+    sunLight.intensity=0.2+sunHeight*1.2;
+    sunLight.color.set(sunHeight>0.3?0xfff0c0:0xff6020);
+  }
+  if(hemiLight)hemiLight.intensity=0.3+sunHeight*0.5;
+  if(fillLight)fillLight.intensity=0.1+sunHeight*0.25;
 }
 
 function updateSeasonVisuals(){
@@ -1447,11 +1565,12 @@ function updateColonistRoster(){
     const hpPct=Math.max(0,Math.min(100,(c.hp/c.maxHp)*100));
     const hpColor=hpPct>60?'#40c070':hpPct>30?'#c0a020':'#c03030';
     const hue=(c.id*137)%360;
+    const traitDots=(c.traits||[]).map(t=>`<span style="color:${TRAITS[t].color}" title="${TRAITS[t].label}">●</span>`).join('');
     const row=document.createElement('div');
     row.className='colonist-row'+(state.selectedColonist===c.id?' selected':'');
     row.innerHTML=`
       <div class="col-dot" style="background:hsl(${hue},55%,45%)"></div>
-      <div class="col-name">${c.name}</div>
+      <div class="col-name">${c.name}${traitDots?'<span style="margin-left:3px">'+traitDots+'</span>':''}</div>
       <div class="col-job">${jobLabel}</div>
       <div class="col-hp">
         <div class="col-hp-bar"><div class="col-hp-fill" style="width:${hpPct}%;background:${hpColor}"></div></div>

@@ -130,6 +130,14 @@
       font-size: 11px; font-family: inherit; cursor: pointer; transition: all 0.12s;
     }
     #save-row button:hover { background: rgba(255,255,255,0.07); color: #90b8d0; }
+
+    .event-btn {
+      padding: 9px 14px; background: rgba(255,255,255,0.04);
+      color: #a0c0d8; border: 1px solid #1e3a58; border-radius: 4px;
+      font-size: 13px; font-family: inherit; cursor: pointer; text-align: left;
+      transition: background 0.12s, color 0.12s;
+    }
+    .event-btn:hover { background: rgba(255,255,255,0.09); color: #d0e8f8; }
   </style>
 </head>
 <body>
@@ -191,6 +199,15 @@
         style="position:absolute;bottom:10px;right:10px;z-index:10;border:2px solid #2a4a6a;cursor:pointer"></canvas>
       <div id="float-container"
         style="position:absolute;inset:0;pointer-events:none;overflow:hidden"></div>
+    </div>
+  </div>
+
+  <!-- Event modal -->
+  <div id="event-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:300;align-items:center;justify-content:center;">
+    <div style="background:#0d1520;border:1px solid #2a4a6a;border-radius:6px;padding:32px 36px;max-width:360px;width:90%;font-family:'Inter',sans-serif;">
+      <div id="event-title" style="font-family:'Cinzel',serif;font-size:18px;margin-bottom:10px;"></div>
+      <div id="event-body" style="font-size:13px;color:#7a9ab8;line-height:1.7;margin-bottom:22px;"></div>
+      <div id="event-choices" style="display:flex;flex-direction:column;gap:8px;"></div>
     </div>
   </div>
 
