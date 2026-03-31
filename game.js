@@ -824,54 +824,71 @@ function createColonistMesh(c){
   const pantsMat=new THREE.MeshLambertMaterial({color:new THREE.Color(`hsl(${(hue+30)%360},30%,25%)`)});
   const hairMat=new THREE.MeshLambertMaterial({color:new THREE.Color(`hsl(${(c.id*53)%360},40%,20%)`)});
   const bootMat=new THREE.MeshLambertMaterial({color:0x3a2010});
+  const woodMat=new THREE.MeshLambertMaterial({color:0x8a5020});
+  const metalMat=new THREE.MeshLambertMaterial({color:0x808888});
 
-  // Feet / boots
-  [[-0.07,0.07],[0.07,0.07]].forEach(([x,y])=>{
-    const boot=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.08,0.12),bootMat);
-    boot.position.set(x,y,0.02);g.add(boot);
-  });
-  // Legs
-  [[-0.07,0.18],[0.07,0.18]].forEach(([x,y])=>{
-    const leg=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.05,0.18,6),pantsMat);
-    leg.position.set(x,y,0);g.add(leg);
-  });
-  // Torso (shirt)
+  // Left leg pivot (at hip)
+  const lLeg=new THREE.Group();lLeg.name='lLeg';lLeg.position.set(-0.07,0.27,0);
+  const lLegM=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.05,0.18,6),pantsMat);
+  lLegM.position.y=-0.09;lLeg.add(lLegM);
+  const lBoot=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.08,0.12),bootMat);
+  lBoot.position.set(0,-0.2,0.02);lLeg.add(lBoot);
+  g.add(lLeg);
+  // Right leg pivot
+  const rLeg=new THREE.Group();rLeg.name='rLeg';rLeg.position.set(0.07,0.27,0);
+  const rLegM=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.05,0.18,6),pantsMat);
+  rLegM.position.y=-0.09;rLeg.add(rLegM);
+  const rBoot=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.08,0.12),bootMat);
+  rBoot.position.set(0,-0.2,0.02);rLeg.add(rBoot);
+  g.add(rLeg);
+
+  // Torso (pivotable for bending)
+  const body=new THREE.Group();body.name='body';body.position.set(0,0.27,0);
   const torso=new THREE.Mesh(new THREE.BoxGeometry(0.24,0.22,0.14),shirtMat);
-  torso.position.y=0.38;g.add(torso);
-  // Arms
-  [[-0.16,0.36],[0.16,0.36]].forEach(([x,y])=>{
-    const arm=new THREE.Mesh(new THREE.CylinderGeometry(0.035,0.04,0.2,6),shirtMat);
-    arm.position.set(x,y,0);g.add(arm);
-    // Hands
-    const hand=new THREE.Mesh(new THREE.SphereGeometry(0.035,6,4),skinMat);
-    hand.position.set(x,y-0.12,0);g.add(hand);
-  });
-  // Head
-  const head=new THREE.Mesh(new THREE.SphereGeometry(0.12,8,6),skinMat);
-  head.position.y=0.58;g.add(head);
-  // Hair
-  const hair=new THREE.Mesh(new THREE.SphereGeometry(0.125,8,6,0,Math.PI*2,0,Math.PI*0.55),hairMat);
-  hair.position.y=0.6;g.add(hair);
+  torso.position.y=0.11;body.add(torso);
 
-  // Job indicator (carried tool)
+  // Left arm pivot (at shoulder)
+  const lArm=new THREE.Group();lArm.name='lArm';lArm.position.set(-0.16,0.2,0);
+  const lArmM=new THREE.Mesh(new THREE.CylinderGeometry(0.035,0.04,0.2,6),shirtMat);
+  lArmM.position.y=-0.1;lArm.add(lArmM);
+  const lHand=new THREE.Mesh(new THREE.SphereGeometry(0.035,6,4),skinMat);
+  lHand.position.y=-0.22;lArm.add(lHand);
+  body.add(lArm);
+  // Right arm pivot
+  const rArm=new THREE.Group();rArm.name='rArm';rArm.position.set(0.16,0.2,0);
+  const rArmM=new THREE.Mesh(new THREE.CylinderGeometry(0.035,0.04,0.2,6),shirtMat);
+  rArmM.position.y=-0.1;rArm.add(rArmM);
+  const rHand=new THREE.Mesh(new THREE.SphereGeometry(0.035,6,4),skinMat);
+  rHand.position.y=-0.22;rArm.add(rHand);
+  // Tool attached to right hand
   const toolGroup=new THREE.Group();toolGroup.name='tool';toolGroup.visible=false;
-  // Axe handle
-  const handle=new THREE.Mesh(new THREE.CylinderGeometry(0.015,0.015,0.28,4),new THREE.MeshLambertMaterial({color:0x8a5020}));
-  handle.rotation.z=0.4;handle.position.set(0.22,0.42,0);toolGroup.add(handle);
-  // Axe head
-  const axeHead=new THREE.Mesh(new THREE.BoxGeometry(0.03,0.1,0.06),new THREE.MeshLambertMaterial({color:0x808888}));
-  axeHead.position.set(0.3,0.52,0);toolGroup.add(axeHead);
-  g.add(toolGroup);
+  const handle=new THREE.Mesh(new THREE.CylinderGeometry(0.015,0.015,0.28,4),woodMat);
+  handle.position.y=-0.08;toolGroup.add(handle);
+  const axeH=new THREE.Mesh(new THREE.BoxGeometry(0.03,0.1,0.06),metalMat);
+  axeH.position.y=0.05;toolGroup.add(axeH);
+  toolGroup.position.y=-0.22;
+  rArm.add(toolGroup);
+  body.add(rArm);
 
-  // Soldier helmet + sword
+  // Head
+  const headG=new THREE.Group();headG.name='head';headG.position.y=0.22;
+  const headM=new THREE.Mesh(new THREE.SphereGeometry(0.12,8,6),skinMat);
+  headM.position.y=0.1;headG.add(headM);
+  const hairM=new THREE.Mesh(new THREE.SphereGeometry(0.125,8,6,0,Math.PI*2,0,Math.PI*0.55),hairMat);
+  hairM.position.y=0.12;headG.add(hairM);
+  body.add(headG);
+
+  // Soldier gear (attached to body group)
   const soldierGroup=new THREE.Group();soldierGroup.name='soldier';soldierGroup.visible=false;
   const helm=new THREE.Mesh(new THREE.SphereGeometry(0.14,8,6,0,Math.PI*2,0,Math.PI*0.6),new THREE.MeshLambertMaterial({color:0x707880}));
-  helm.position.y=0.63;soldierGroup.add(helm);
+  helm.position.y=0.34;soldierGroup.add(helm);
   const sword=new THREE.Mesh(new THREE.BoxGeometry(0.02,0.32,0.04),new THREE.MeshLambertMaterial({color:0xb0b8c0}));
-  sword.position.set(0.2,0.38,0);sword.rotation.z=-0.2;soldierGroup.add(sword);
+  sword.position.set(0.2,0.08,0);sword.rotation.z=-0.2;soldierGroup.add(sword);
   const hilt=new THREE.Mesh(new THREE.BoxGeometry(0.06,0.02,0.06),new THREE.MeshLambertMaterial({color:0x6a4020}));
-  hilt.position.set(0.2,0.24,0);soldierGroup.add(hilt);
-  g.add(soldierGroup);
+  hilt.position.set(0.18,-0.04,0);soldierGroup.add(hilt);
+  body.add(soldierGroup);
+
+  g.add(body);
 
   // Selection ring
   const ring=new THREE.Mesh(new THREE.RingGeometry(0.25,0.32,16),new THREE.MeshBasicMaterial({color:0x40ff80,side:THREE.DoubleSide,transparent:true,opacity:0.85}));
@@ -934,24 +951,107 @@ function createRaiderMesh(r){
 }
 function syncUnits(){
   // colonists
+  const t=state.tick;
   state.colonists.forEach(c=>{
     if(!colonistMeshes.has(c.id))createColonistMesh(c);
     const g=colonistMeshes.get(c.id);
     g.position.set(c.x/TILE,0,c.y/TILE);
     const ring=g.getObjectByName('selring');
     if(ring)ring.visible=(state.selectedColonist===c.id);
-    // Toggle tool/soldier indicators based on job
-    const tool=g.getObjectByName('tool');
-    const soldier=g.getObjectByName('soldier');
+
+    const body=g.getObjectByName('body');
+    const lLeg=g.getObjectByName('lLeg');
+    const rLeg=g.getObjectByName('rLeg');
+    const lArm=body?.getObjectByName('lArm');
+    const rArm=body?.getObjectByName('rArm');
+    const head=body?.getObjectByName('head');
+    const tool=body?.getObjectByName('tool');
+    const soldier=body?.getObjectByName('soldier');
+
     const b=c.job!==null?state.buildings[c.job]:null;
     const isSoldier=b&&b.type==='barracks';
-    const hasToolJob=b&&(b.constructing||b.type==='woodcutter'||b.type==='quarry'||b.type==='farm');
+    const isBuilder=b&&b.constructing;
+    const isWorker=b&&!b.constructing&&(b.type==='woodcutter'||b.type==='quarry');
+    const isFarmer=b&&!b.constructing&&b.type==='farm';
+    const hasToolJob=isBuilder||isWorker||isFarmer;
     if(tool)tool.visible=!!hasToolJob;
     if(soldier)soldier.visible=!!isSoldier;
-    // Simple walk bob animation
-    if(c.path&&c.path.length>0){
-      const bob=Math.sin(state.tick*0.3+c.id)*0.03;
-      g.position.y=bob;
+
+    const walking=c.path&&c.path.length>0;
+    const phase=t*0.15+c.id*2.3; // unique phase per colonist
+    // Determine if colonist is at their workplace
+    const atWork=b&&!walking&&Math.abs(c.x/TILE-(b.c+0.5))<1.5&&Math.abs(c.y/TILE-(b.r+0.5))<1.5;
+
+    if(walking){
+      // ── Walk cycle: legs and arms swing opposite ──
+      const swing=Math.sin(phase*2)*0.45;
+      if(lLeg)lLeg.rotation.x=swing;
+      if(rLeg)rLeg.rotation.x=-swing;
+      if(lArm)lArm.rotation.x=-swing*0.6;
+      if(rArm)rArm.rotation.x=swing*0.6;
+      if(body)body.rotation.x=0;
+      if(head)head.rotation.x=0;
+      g.position.y=Math.abs(Math.sin(phase*2))*0.03;
+    } else if(atWork&&isBuilder){
+      // ── Hammering: right arm swings down, body bends forward ──
+      const hammer=Math.sin(phase*3);
+      if(rArm)rArm.rotation.x=hammer>0?-hammer*1.2:-0.1;
+      if(lArm)lArm.rotation.x=-0.3;
+      if(body)body.rotation.x=0.15+Math.max(0,hammer)*0.1;
+      if(lLeg)lLeg.rotation.x=0;
+      if(rLeg)rLeg.rotation.x=0;
+      if(head)head.rotation.x=-0.1;
+      g.position.y=0;
+    } else if(atWork&&isWorker){
+      // ── Chopping/mining: two-handed overhead swing ──
+      const chop=Math.sin(phase*2.5);
+      const armAng=chop>0?-chop*1.4:-0.2;
+      if(rArm)rArm.rotation.x=armAng;
+      if(lArm)lArm.rotation.x=armAng*0.7;
+      if(body)body.rotation.x=0.1+Math.max(0,chop)*0.15;
+      if(lLeg)lLeg.rotation.x=0.05;
+      if(rLeg)rLeg.rotation.x=-0.05;
+      if(head)head.rotation.x=-0.1;
+      g.position.y=0;
+    } else if(atWork&&isFarmer){
+      // ── Farming: bending down and up, arms reach to ground ──
+      const bend=Math.sin(phase*1.5)*0.5+0.5; // 0..1 range
+      if(body)body.rotation.x=bend*0.4;
+      if(rArm)rArm.rotation.x=bend*0.6;
+      if(lArm)lArm.rotation.x=bend*0.6;
+      if(lLeg)lLeg.rotation.x=0;
+      if(rLeg)rLeg.rotation.x=0;
+      if(head)head.rotation.x=-bend*0.2;
+      g.position.y=0;
+    } else if(atWork&&isSoldier){
+      // ── Training: sword practice swings ──
+      const sw=Math.sin(phase*2);
+      if(rArm)rArm.rotation.x=sw*0.8;
+      if(lArm)lArm.rotation.x=-sw*0.4;
+      if(body)body.rotation.x=sw*0.05;
+      if(lLeg)lLeg.rotation.x=sw*0.2;
+      if(rLeg)rLeg.rotation.x=-sw*0.2;
+      if(head)head.rotation.x=0;
+      g.position.y=0;
+    } else if(c.attackCooldown>0){
+      // ── Combat strike ──
+      const strike=Math.sin(t*0.5)*0.8;
+      if(rArm)rArm.rotation.x=strike;
+      if(lArm)lArm.rotation.x=0;
+      if(body)body.rotation.x=0.1;
+      if(lLeg)lLeg.rotation.x=0;
+      if(rLeg)rLeg.rotation.x=0;
+      g.position.y=0;
+    } else {
+      // ── Idle: gentle breathing sway ──
+      const idle=Math.sin(phase*0.5)*0.03;
+      if(lLeg)lLeg.rotation.x=0;
+      if(rLeg)rLeg.rotation.x=0;
+      if(lArm)lArm.rotation.x=idle;
+      if(rArm)rArm.rotation.x=-idle;
+      if(body)body.rotation.x=0;
+      if(head)head.rotation.x=0;
+      g.position.y=0;
     }
   });
   colonistMeshes.forEach((g,id)=>{
