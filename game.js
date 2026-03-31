@@ -674,26 +674,76 @@ function assembleBuildingGeo(b,g){
   const sz=BUILDINGS[b.type].size;
   g.position.set(b.c+sz/2,0,b.r+sz/2);
   if(b.constructing){
-    // Foundation slab
-    bx(g,sz*0.9,0.08,sz*0.9,0x8a7060,0,0.04,0);
-    // Four corner scaffold poles
-    const hw=sz*0.38;
-    [[hw,hw],[hw,-hw],[-hw,hw],[-hw,-hw]].forEach(([px,pz])=>{
-      bx(g,0.06,1.0,0.06,0xc08020,px,0.5,pz);
-    });
-    // Horizontal planks at mid and top
-    bx(g,sz*0.82,0.05,0.06,0xc08020,0,0.5,0);
-    bx(g,0.06,0.05,sz*0.82,0xc08020,0,0.5,0);
-    bx(g,sz*0.82,0.05,0.06,0xc08020,0,0.9,0);
-    bx(g,0.06,0.05,sz*0.82,0xc08020,0,0.9,0);
-    // Progress fill bar (name='pbar' so we can update it)
     const pct=b.progress/120;
-    const barW=Math.max(0.05,sz*0.8*pct);
-    const bar=new THREE.Mesh(new THREE.BoxGeometry(barW,0.1,0.12),new THREE.MeshBasicMaterial({color:0x40d060}));
-    bar.name='pbar';bar.position.set(-sz*0.4+barW/2,1.1,0);g.add(bar);
-    const barBg=new THREE.Mesh(new THREE.BoxGeometry(sz*0.8,0.1,0.12),new THREE.MeshBasicMaterial({color:0x303030}));
-    barBg.position.set(0,1.1,0.01);g.add(barBg);
-    bar.renderOrder=1;
+    const stage=Math.floor(pct*5); // 0..4
+    b._stage=stage; // track for rebuild detection
+
+    // Stage 0 (0-20%): Cleared dirt patch with stakes
+    if(stage===0){
+      bx(g,sz*0.92,0.06,sz*0.92,0x6a5030,0,0.03,0); // dirt patch
+      const hw=sz*0.4;
+      [[hw,hw],[hw,-hw],[-hw,hw],[-hw,-hw]].forEach(([px,pz])=>{
+        bx(g,0.04,0.3,0.04,0x8a6030,px,0.15,pz); // stakes
+      });
+    }
+    // Stage 1 (20-40%): Stone foundation
+    else if(stage===1){
+      bx(g,sz*0.92,0.06,sz*0.92,0x6a5030,0,0.03,0); // dirt
+      bx(g,sz*0.88,0.14,sz*0.88,0x808078,0,0.13,0); // stone foundation
+    }
+    // Stage 2 (40-60%): Foundation + half walls
+    else if(stage===2){
+      bx(g,sz*0.88,0.14,sz*0.88,0x808078,0,0.07,0); // foundation
+      const wh=0.25; // half wall height
+      bx(g,sz*0.84,wh,0.08,0x7a5530,0,0.20+wh/2,sz*0.42);  // front wall
+      bx(g,sz*0.84,wh,0.08,0x7a5530,0,0.20+wh/2,-sz*0.42); // back wall
+      bx(g,0.08,wh,sz*0.84,0x7a5530,sz*0.42,0.20+wh/2,0);  // right wall
+      bx(g,0.08,wh,sz*0.84,0x7a5530,-sz*0.42,0.20+wh/2,0); // left wall
+      // scaffold poles
+      const hw=sz*0.44;
+      [[hw,hw],[-hw,-hw]].forEach(([px,pz])=>{
+        bx(g,0.05,0.7,0.05,0xc09030,px,0.35,pz);
+      });
+    }
+    // Stage 3 (60-80%): Full walls, door hole, no roof
+    else if(stage===3){
+      bx(g,sz*0.88,0.14,sz*0.88,0x808078,0,0.07,0); // foundation
+      const wh=0.5;
+      bx(g,sz*0.84,wh,0.08,0x7a5530,0,0.14+wh/2,sz*0.42);  // front
+      bx(g,sz*0.84,wh,0.08,0x7a5530,0,0.14+wh/2,-sz*0.42); // back
+      bx(g,0.08,wh,sz*0.84,0x7a5530,sz*0.42,0.14+wh/2,0);  // right
+      bx(g,0.08,wh,sz*0.84,0x7a5530,-sz*0.42,0.14+wh/2,0); // left
+      // door opening (front face)
+      bx(g,0.18,0.28,0.09,0x3a1800,0,0.28,sz*0.43);
+      // scaffold
+      const hw=sz*0.44;
+      [[hw,hw],[hw,-hw],[-hw,hw],[-hw,-hw]].forEach(([px,pz])=>{
+        bx(g,0.05,0.9,0.05,0xc09030,px,0.45,pz);
+      });
+      bx(g,sz*0.82,0.04,0.05,0xc09030,0,0.75,0); // top scaffold beam
+    }
+    // Stage 4 (80-100%): Walls + partial roof frame
+    else {
+      bx(g,sz*0.88,0.14,sz*0.88,0x808078,0,0.07,0); // foundation
+      const wh=0.55;
+      bx(g,sz*0.84,wh,0.08,0x7a5530,0,0.14+wh/2,sz*0.42);
+      bx(g,sz*0.84,wh,0.08,0x7a5530,0,0.14+wh/2,-sz*0.42);
+      bx(g,0.08,wh,sz*0.84,0x7a5530,sz*0.42,0.14+wh/2,0);
+      bx(g,0.08,wh,sz*0.84,0x7a5530,-sz*0.42,0.14+wh/2,0);
+      bx(g,0.18,0.28,0.09,0x3a1800,0,0.28,sz*0.43); // door
+      // Partial roof frame
+      bx(g,sz*0.86,0.06,sz*0.86,0x9a6020,0,wh+0.17,0); // flat roof planks
+      bx(g,sz*0.3,0.08,0.06,0x9a6020,0,wh+0.28,0); // ridge beam
+    }
+
+    // Progress bar above everything — always visible
+    const barY=stage<3?0.6:1.0;
+    const barW=sz*0.7;
+    const barBg=new THREE.Mesh(new THREE.BoxGeometry(barW,0.08,0.08),new THREE.MeshBasicMaterial({color:0x222222}));
+    barBg.position.set(0,barY,0);g.add(barBg);
+    const fillW=Math.max(0.02,barW*pct);
+    const barFill=new THREE.Mesh(new THREE.BoxGeometry(fillW,0.09,0.09),new THREE.MeshBasicMaterial({color:pct<0.5?0xe0a020:0x40d060}));
+    barFill.name='pbar';barFill.position.set(-barW/2+fillW/2,barY,0.01);g.add(barFill);
     return;
   }
   switch(b.type){
@@ -944,15 +994,24 @@ function canBuildAt(r,c,sz){
 function syncBuildings(){
   state.buildings.forEach(b=>{
     if(!b.constructing)return;
-    const g=buildingMeshes.get(b.id);
-    if(!g)return;
-    const bar=g.getObjectByName('pbar');
-    if(!bar)return;
+    const newStage=Math.floor((b.progress/120)*5);
+    // Rebuild mesh when construction stage changes
+    if(b._stage!==undefined&&b._stage!==newStage){
+      rebuildBuildingMesh(b.id);
+    }
+    // Update progress bar fill width
+    const g=buildingMeshes.get(b.id);if(!g)return;
+    const bar=g.getObjectByName('pbar');if(!bar)return;
     const sz=BUILDINGS[b.type].size;
     const pct=Math.max(0.01, b.progress/120);
-    // Scale bar from left edge
-    bar.scale.x=pct;
-    bar.position.x=-sz*0.4*(1-pct);
+    const barW=sz*0.7;
+    const fillW=Math.max(0.02,barW*pct);
+    bar.scale.x=1; // reset scale; update geometry via position
+    bar.position.x=-barW/2+fillW/2;
+    // Update bar geometry width by scaling
+    const baseW=bar.geometry.parameters?.width||0.02;
+    bar.scale.x=fillW/baseW;
+    bar.material.color.set(pct<0.5?0xe0a020:0x40d060);
   });
 }
 function draw(){
