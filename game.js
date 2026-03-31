@@ -856,7 +856,7 @@ function drawMinimap(){
   const tw=MM_W/COLS,th=MM_H/ROWS;
   for(let r=0;r<ROWS;r++){
     for(let c=0;c<COLS;c++){
-      minimapCtx.fillStyle=MM_COLORS[state.map[r][c]]||'#4a7a3a';
+      minimapCtx.fillStyle=MM_COLORS[state.tiles[r]?.[c]?.type]||'#4a7a3a';
       minimapCtx.fillRect(c*tw,r*th,tw+0.5,th+0.5);
     }
   }
@@ -908,8 +908,8 @@ function updatePlacementGhost(){
 function canBuildAt(r,c,sz){
   if(r<0||c<0||r+sz>ROWS||c+sz>COLS)return false;
   for(let dr=0;dr<sz;dr++)for(let dc=0;dc<sz;dc++){
-    const t=state.map[r+dr]?.[c+dc];
-    if(t===T.WATER)return false;
+    const t=state.tiles[r+dr]?.[c+dc];
+    if(t?.type===T.WATER)return false;
     if(Object.values(state.buildings).some(b=>{
       const bs=BUILDINGS[b.type].size;
       return !(c+sz<=b.c||c>=b.c+bs||r+sz<=b.r||r>=b.r+bs);
@@ -950,7 +950,7 @@ function log(msg){
 function showTileInfo(r,c){
   const ic=document.getElementById('info-content');
   if(r===null){ic.textContent='Click a tile to inspect';return;}
-  const tt=['Grass','Forest','Stone','Water','Dirt'][state.map[r][c]]||'?';
+  const tt=['Grass','Forest','Stone','Water','Dirt'][state.tiles[r]?.[c]?.type]||'?';
   const bld=Object.values(state.buildings).find(b=>{const s=BUILDINGS[b.type].size;return r>=b.r&&r<b.r+s&&c>=b.c&&c<b.c+s;});
   let html=`<b>Tile (${r},${c})</b><br>Terrain: ${tt}`;
   if(bld){
