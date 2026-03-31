@@ -673,7 +673,29 @@ function rebuildBuildingMesh(id){
 function assembleBuildingGeo(b,g){
   const sz=BUILDINGS[b.type].size;
   g.position.set(b.c+sz/2,0,b.r+sz/2);
-  if(b.constructing){bx(g,0.8,0.3,0.8,0xc0a050,0,0.15,0);return;}
+  if(b.constructing){
+    // Foundation slab
+    bx(g,sz*0.9,0.08,sz*0.9,0x8a7060,0,0.04,0);
+    // Four corner scaffold poles
+    const hw=sz*0.38;
+    [[hw,hw],[hw,-hw],[-hw,hw],[-hw,-hw]].forEach(([px,pz])=>{
+      bx(g,0.06,1.0,0.06,0xc08020,px,0.5,pz);
+    });
+    // Horizontal planks at mid and top
+    bx(g,sz*0.82,0.05,0.06,0xc08020,0,0.5,0);
+    bx(g,0.06,0.05,sz*0.82,0xc08020,0,0.5,0);
+    bx(g,sz*0.82,0.05,0.06,0xc08020,0,0.9,0);
+    bx(g,0.06,0.05,sz*0.82,0xc08020,0,0.9,0);
+    // Progress fill bar (name='pbar' so we can update it)
+    const pct=b.progress/120;
+    const barW=Math.max(0.05,sz*0.8*pct);
+    const bar=new THREE.Mesh(new THREE.BoxGeometry(barW,0.1,0.12),new THREE.MeshBasicMaterial({color:0x40d060}));
+    bar.name='pbar';bar.position.set(-sz*0.4+barW/2,1.1,0);g.add(bar);
+    const barBg=new THREE.Mesh(new THREE.BoxGeometry(sz*0.8,0.1,0.12),new THREE.MeshBasicMaterial({color:0x303030}));
+    barBg.position.set(0,1.1,0.01);g.add(barBg);
+    bar.renderOrder=1;
+    return;
+  }
   switch(b.type){
     case'house':
       bx(g,0.9,0.12,0.9,0x8a7060,0,0.06,0);bx(g,0.85,0.55,0.85,0x7a5030,0,0.4,0);
@@ -919,9 +941,24 @@ function canBuildAt(r,c,sz){
 }
 
 // ── Main draw loop ──────────────────────────────────────────────────────────
+function syncBuildings(){
+  state.buildings.forEach(b=>{
+    if(!b.constructing)return;
+    const g=buildingMeshes.get(b.id);
+    if(!g)return;
+    const bar=g.getObjectByName('pbar');
+    if(!bar)return;
+    const sz=BUILDINGS[b.type].size;
+    const pct=Math.max(0.01, b.progress/120);
+    // Scale bar from left edge
+    bar.scale.x=pct;
+    bar.position.x=-sz*0.4*(1-pct);
+  });
+}
 function draw(){
   requestAnimationFrame(draw);
   syncUnits();
+  syncBuildings();
   updateSmokeSystem();
   updateFloatDivs();
   updatePlacementGhost();
