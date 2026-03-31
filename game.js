@@ -567,10 +567,13 @@ function bmat(col){return new THREE.MeshBasicMaterial({color:col});}
 
 function initThree(){
   const area=document.getElementById('game-area');
-  renderer=new THREE.WebGLRenderer({antialias:true});
+  renderer=new THREE.WebGLRenderer({antialias:true,powerPreference:'high-performance'});
   renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
   renderer.shadowMap.enabled=true;
   renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+  renderer.toneMapping=THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure=1.15;
+  renderer.outputColorSpace=THREE.SRGBColorSpace;
   renderer.setSize(area.clientWidth,area.clientHeight);
   area.appendChild(renderer.domElement);
   scene=new THREE.Scene();
@@ -605,25 +608,57 @@ function initThree(){
   window.addEventListener('resize',onResize);
 }
 
+// Smooth camera — actual rendered position lerps toward target each frame
+let camCurrent={x:COLS/2, z:ROWS/2};
+let camZoomCurrent=18;
+
 function setupCamera(){
   const area=document.getElementById('game-area');
   const aspect=area.clientWidth/area.clientHeight;
-  const fh=state.camZoom;
+  const fh=camZoomCurrent;
   camera=new THREE.OrthographicCamera(-fh*aspect/2,fh*aspect/2,fh/2,-fh/2,0.1,300);
   updateCameraPos();
 }
 
 function updateCameraPos(){
-  const t=state.camTarget;
+  // Called only for instant snaps (load, minimap click)
+  camCurrent.x=state.camTarget.x;
+  camCurrent.z=state.camTarget.z;
+  camZoomCurrent=state.camZoom;
+  applyCameraPos();
+}
+
+function applyCameraPos(){
+  const t=camCurrent;
   camera.position.set(t.x+18,22,t.z+18);
   camera.lookAt(t.x,0,t.z);
 }
 
+function updateCameraFrustum(){
+  const area=document.getElementById('game-area');
+  const aspect=(renderer?.domElement.clientWidth||area.clientWidth)/(renderer?.domElement.clientHeight||area.clientHeight);
+  const fh=camZoomCurrent;
+  camera.left=-fh*aspect/2;camera.right=fh*aspect/2;
+  camera.top=fh/2;camera.bottom=-fh/2;
+  camera.updateProjectionMatrix();
+}
+
 function onResize(){
   const area=document.getElementById('game-area');
-  const w=area.clientWidth,h=area.clientHeight,aspect=w/h,fh=state.camZoom;
-  camera.left=-fh*aspect/2;camera.right=fh*aspect/2;camera.top=fh/2;camera.bottom=-fh/2;
-  camera.updateProjectionMatrix();renderer.setSize(w,h);
+  renderer.setSize(area.clientWidth,area.clientHeight);
+  updateCameraFrustum();
+}
+
+function tickCamera(){
+  const lx=0.12, lz=0.12, lzoom=0.14;
+  let changed=false;
+  const dx=state.camTarget.x-camCurrent.x;
+  const dz=state.camTarget.z-camCurrent.z;
+  const dZoom=state.camZoom-camZoomCurrent;
+  if(Math.abs(dx)>0.001){camCurrent.x+=dx*lx;changed=true;}
+  if(Math.abs(dz)>0.001){camCurrent.z+=dz*lz;changed=true;}
+  if(Math.abs(dZoom)>0.01){camZoomCurrent+=dZoom*lzoom;changed=true;}
+  if(changed){applyCameraPos();updateCameraFrustum();}
 }
 
 function updateSeasonVisuals(){
@@ -1057,7 +1092,17 @@ function syncUnits(){
   state.colonists.forEach(c=>{
     if(!colonistMeshes.has(c.id))createColonistMesh(c);
     const g=colonistMeshes.get(c.id);
-    g.position.set(c.x/TILE,0,c.y/TILE);
+    // Lerp toward game-logic position for smooth 60fps movement
+    const tx=c.x/TILE, tz=c.y/TILE;
+    const cdx=tx-g.position.x, cdz=tz-g.position.z;
+    g.position.x+=cdx*0.22; g.position.z+=cdz*0.22;
+    // Face movement direction smoothly
+    if(Math.abs(cdx)+Math.abs(cdz)>0.003){
+      const targetAngle=Math.atan2(cdx,cdz);
+      let da=targetAngle-g.rotation.y;
+      if(da>Math.PI)da-=Math.PI*2; if(da<-Math.PI)da+=Math.PI*2;
+      g.rotation.y+=da*0.18;
+    }
     const ring=g.getObjectByName('selring');
     if(ring)ring.visible=(state.selectedColonist===c.id);
 
@@ -1163,7 +1208,11 @@ function syncUnits(){
   state.raiders.forEach(r=>{
     if(!raiderMeshes.has(r.id))createRaiderMesh(r);
     const g=raiderMeshes.get(r.id);
-    g.position.set(r.x/TILE,0,r.y/TILE);
+    const rtx=r.x/TILE, rtz=r.y/TILE;
+    const rdx=rtx-g.position.x, rdz=rtz-g.position.z;
+    g.position.x+=rdx*0.22; g.position.z+=rdz*0.22;
+    // Face movement direction
+    if(Math.abs(rdx)+Math.abs(rdz)>0.002)g.rotation.y=Math.atan2(rdx,rdz);
   });
   raiderMeshes.forEach((g,id)=>{
     if(!state.raiders.find(r=>r.id===id)){unitGroup.remove(g);raiderMeshes.delete(id);}
@@ -1214,28 +1263,37 @@ function updateSmokeSystem(){
   smokeGeo.attributes.position.needsUpdate=true;
 }
 
-// ── Floating text (CSS divs) ─────────────────────────────────────────────────
+// ── Floating text (CSS divs — pooled) ────────────────────────────────────────
 let floatContainer;
-function initFloats(){floatContainer=document.getElementById('float-container');}
+const floatDivPool=[];
+function initFloats(){
+  floatContainer=document.getElementById('float-container');
+  // Pre-create pool
+  for(let i=0;i<32;i++){
+    const d=document.createElement('div');
+    d.className='float-label';d.style.display='none';
+    floatContainer.appendChild(d);floatDivPool.push(d);
+  }
+}
 function updateFloatDivs(){
-  // Remove all existing float divs and recreate
-  while(floatContainer.firstChild)floatContainer.removeChild(floatContainer.firstChild);
   state.floats=state.floats.filter(f=>f.life>0);
+  const w=renderer.domElement.clientWidth,h=renderer.domElement.clientHeight;
+  let pi=0;
   state.floats.forEach(f=>{
     f.life--;
-    const v=new THREE.Vector3(f.wx,f.wy+(1-(f.life/f.maxLife))*0.8,f.wz);
+    const v=new THREE.Vector3(f.wx,f.wy+(1-(f.life/f.maxLife))*1.0,f.wz);
     v.project(camera);
-    const w=renderer.domElement.clientWidth,h=renderer.domElement.clientHeight;
     const sx=(v.x*0.5+0.5)*w;
     const sy=(-v.y*0.5+0.5)*h;
-    const d=document.createElement('div');
-    d.className='float-label';
+    const d=floatDivPool[pi++];if(!d)return;
+    d.style.display='block';
     d.style.left=sx+'px';d.style.top=sy+'px';
     d.style.color=f.color;
-    d.style.opacity=Math.min(1,f.life/20);
+    d.style.opacity=Math.min(1,f.life/18);
     d.textContent=f.text;
-    floatContainer.appendChild(d);
   });
+  // Hide unused pool entries
+  for(let i=pi;i<floatDivPool.length;i++)floatDivPool[i].style.display='none';
 }
 
 // ── Minimap ───────────────────────────────────────────────────────────────────
@@ -1346,6 +1404,7 @@ function syncBuildings(){
 }
 function draw(){
   requestAnimationFrame(draw);
+  tickCamera();
   syncUnits();
   syncBuildings();
   updateSmokeSystem();
@@ -1369,9 +1428,18 @@ function updateResourceUI(){
   if(state.raiders.length>0)ra.classList.add('active');else ra.classList.remove('active');
   updateColonistRoster();
 }
+let _rosterHash='';
 function updateColonistRoster(){
   const list=document.getElementById('roster-list');
   if(!list)return;
+  // Build a lightweight hash — only rebuild DOM when something meaningful changed
+  const hash=state.colonists.map(c=>{
+    const b=c.job!==null?state.buildings[c.job]:null;
+    return `${c.id}:${c.hp}:${c.job}:${b?.constructing?1:0}:${state.selectedColonist===c.id?1:0}`;
+  }).join('|')+`|${state.colonists.length}`;
+  if(hash===_rosterHash)return;
+  _rosterHash=hash;
+
   list.innerHTML='';
   state.colonists.forEach(c=>{
     const b=c.job!==null?state.buildings[c.job]:null;

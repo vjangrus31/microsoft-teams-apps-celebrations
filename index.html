@@ -107,6 +107,13 @@
     /* Game area */
     #game-area { flex: 1; position: relative; overflow: hidden; cursor: default; }
     #game-area.placing { cursor: crosshair; }
+    #game-area canvas { display: block; }
+    /* Vignette overlay */
+    #game-area::after {
+      content:''; pointer-events:none; position:absolute; inset:0;
+      background:radial-gradient(ellipse at 50% 50%, transparent 55%, rgba(0,0,0,0.45) 100%);
+      z-index:5;
+    }
 
     .float-label {
       position: absolute; font-family: 'Inter', sans-serif;
