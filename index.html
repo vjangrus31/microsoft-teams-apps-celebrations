@@ -87,9 +87,19 @@
     #log-content div { border-bottom: 1px solid #0e1820; padding: 2px 0; }
     #log-content div:first-child { color: #7a9ab8; }
 
-    #game-area { flex: 1; position: relative; overflow: hidden; }
-    #canvas { display: block; cursor: default; }
-    #canvas.placing { cursor: crosshair; }
+    #game-area { flex: 1; position: relative; overflow: hidden; cursor: default; }
+    #game-area.placing { cursor: crosshair; }
+
+    .float-label {
+      position: absolute;
+      font-family: 'Inter', sans-serif;
+      font-size: 11px;
+      font-weight: bold;
+      pointer-events: none;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+      transform: translate(-50%, -50%);
+      white-space: nowrap;
+    }
   </style>
 </head>
 <body>
@@ -108,7 +118,7 @@
       <div id="season-info">
         <div id="season-label">Spring</div>
         <div id="day-label">Day 1</div>
-        <div id="raid-alert">⚔ Raiders!</div>
+        <div id="raid-alert">&#9876; Raiders!</div>
       </div>
 
       <div id="build-panel">
@@ -144,7 +154,11 @@
     </div>
 
     <div id="game-area">
-      <canvas id="canvas"></canvas>
+      <!-- Three.js renders into its own canvas appended here -->
+      <canvas id="minimap-canvas" width="160" height="120"
+        style="position:absolute;bottom:10px;right:10px;z-index:10;border:2px solid #2a4a6a;cursor:pointer"></canvas>
+      <div id="float-container"
+        style="position:absolute;inset:0;pointer-events:none;overflow:hidden"></div>
     </div>
   </div>
 
@@ -157,6 +171,7 @@
     </div>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
   <script src="game.js" onerror="document.body.innerHTML='<p style=color:red;padding:20px>Could not load game.js — make sure all 3 files are in the same folder</p>'"></script>
 </body>
 </html>
