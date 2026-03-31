@@ -102,8 +102,16 @@ function spawnColonist() {
 function assignJobs() {
   const prod=new Set(['farm','woodcutter','quarry','barracks']);
   const unassigned=state.colonists.filter(c=>c.job===null);
-  const needsWorker=state.buildings.filter(b=>prod.has(b.type)&&b.workers<2&&b.hp>0);
+  // Priority 1: construction sites need builders (up to 3 per site)
+  const constructing=state.buildings.filter(b=>b.constructing&&b.workers<3);
   unassigned.forEach(c=>{
+    const b=constructing.find(b=>b.workers<3);
+    if(b){c.job=b.id;b.workers++;log(`🔨 ${c.name} → build ${BUILDINGS[b.type].name}`);return;}
+  });
+  // Priority 2: production buildings
+  const stillFree=state.colonists.filter(c=>c.job===null);
+  const needsWorker=state.buildings.filter(b=>prod.has(b.type)&&!b.constructing&&b.workers<2&&b.hp>0);
+  stillFree.forEach(c=>{
     const b=needsWorker.find(b=>b.workers<2);
     if(b){c.job=b.id;b.workers++;log(`${c.name} assigned to ${BUILDINGS[b.type].name}`);}
   });
@@ -212,13 +220,18 @@ function assignColonistToBuilding(colonistId,buildingId) {
     const b=state.buildings[buildingId];
     if(!b||b.hp<=0){log('That building is destroyed');return;}
     c.job=buildingId;b.workers++;c.path=[];c.pathTarget=null;
-    log(`${c.name} → ${BUILDINGS[b.type].name}`);
+    const action=b.constructing?'build':'work at';
+    log(`${c.name} → ${action} ${BUILDINGS[b.type].name}`);
   }
 }
 
 function showColonistInfo(c) {
   const b=c.job!==null?state.buildings[c.job]:null;
-  const jobName=b?BUILDINGS[b.type].name:'Unassigned';
+  let jobName='Unassigned';
+  if(b){
+    if(b.constructing)jobName=`Building ${BUILDINGS[b.type].name}`;
+    else jobName=BUILDINGS[b.type].name;
+  }
   document.getElementById('info-content').innerHTML=
     `<b>${c.name}</b>${b?.type==='barracks'?' ⚔':''}<br>`+
     `Job: ${jobName}<br>Hunger: ${Math.floor(c.hunger)}/100<br>HP: ${c.hp}/${c.maxHp}<br><br>`+
@@ -309,14 +322,18 @@ function placeBuilding(r,c,type){
   state.buildings.push(b);
   const sz=def.size;
   for(let dr=0;dr<sz;dr++)for(let dc=0;dc<sz;dc++)state.tiles[r+dr][c+dc].building=id;
-  if(instant)log(`Built ${def.name}`);else log(`🔨 Constructing ${def.name}…`);
-  if(type==='house'&&instant){
-    state.housing+=def.housing;
-    const toSpawn=Math.min(def.housing,Math.floor(state.resources.food/5));
-    for(let i=0;i<toSpawn;i++)if(state.population<state.housing)spawnColonist();
-    assignJobs();
+  if(instant){
+    log(`Built ${def.name}`);
+    if(type==='house'){
+      state.housing+=def.housing;
+      const toSpawn=Math.min(def.housing,Math.floor(state.resources.food/5));
+      for(let i=0;i<toSpawn;i++)if(state.population<state.housing)spawnColonist();
+    }
+  } else {
+    log(`🔨 ${def.name} placed — waiting for builders`);
   }
   addBuildingMesh(b);
+  assignJobs(); // assign idle colonists to build or work
   updateResourceUI();
   return true;
 }
@@ -385,10 +402,20 @@ function showOverlay(title,body,btnLabel,btnAction){
 function tick(){
   if(state.gameOver)return;
   state.tick++;const t=state.tick;
-  // Construction
+  // Construction — only advances when a builder colonist is nearby
   state.buildings.forEach(b=>{
     if(!b.constructing)return;
-    b.progress++;
+    const sz=BUILDINGS[b.type].size;
+    const bx=(b.c+sz/2)*TILE, by=(b.r+sz/2)*TILE;
+    // Count builders in range (assigned to this building)
+    let builders=0;
+    state.colonists.forEach(c=>{
+      if(c.job!==b.id)return;
+      const dx=c.x-bx, dy=c.y-by, d=Math.sqrt(dx*dx+dy*dy);
+      if(d<TILE*1.8)builders++;
+    });
+    if(builders===0)return; // no one working → no progress
+    b.progress+=builders; // more builders = faster
     if(b.progress>=120){
       b.constructing=false;b.active=true;b.progress=120;
       log(`✅ ${BUILDINGS[b.type].name} complete`);
@@ -397,6 +424,9 @@ function tick(){
         const toSpawn=Math.min(BUILDINGS.house.housing,Math.floor(state.resources.food/5));
         for(let i=0;i<toSpawn;i++)if(state.population<state.housing)spawnColonist();
       }
+      // Unassign builders from this completed building, reassign them
+      state.colonists.forEach(c=>{ if(c.job===b.id){c.job=null;c.path=[];c.pathTarget=null;} });
+      b.workers=0;
       assignJobs();rebuildBuildingMesh(b.id);
     }
   });
