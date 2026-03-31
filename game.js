@@ -720,7 +720,8 @@ function tick(){
     state.day++;state.seasonTick++;
     if(state.seasonTick>=DAYS_PER_SEASON){
       state.seasonTick=0;state.season=(state.season+1)%4;
-      log(`Season: ${SEASON_NAMES[state.season]}`);updateSeasonVisuals();
+      const seasonMsgs=['🌸 Spring has arrived — farms flourish.','☀ Summer heat — peak harvest time.','🍂 Autumn — gather stores before winter.','❄ Winter — farms slow, keep food stocked.'];
+      log(seasonMsgs[state.season]);updateSeasonVisuals();
     }
     updateResourceUI();
     document.getElementById('day-label').textContent=`Day ${state.day}`;
@@ -734,6 +735,7 @@ function tick(){
     if(techBonuses.hpRegen&&t%50===0)state.colonists.forEach(c=>{if(c.hp<c.maxHp)c.hp=Math.min(c.maxHp,c.hp+1);});
   }
   if(t%3===0)updateDayNight();
+  if(t%600===0&&t>0){try{localStorage.setItem('colonyBuilder3D',JSON.stringify({...state,floats:[],selectedColonist:null}));}catch(e){}}
   checkWinLose();
   state.resources.wood=Math.max(0,Math.min(9999,state.resources.wood));
   state.resources.stone=Math.max(0,Math.min(9999,state.resources.stone));
@@ -772,6 +774,7 @@ let terrainMeshes=[],decorGroups=[];
 let buildingMeshes=new Map(),colonistMeshes=new Map(),raiderMeshes=new Map();
 let smokeMesh,ghostMesh=null;
 let mmCanvas,mmCtx;
+let weatherParticles=null,weatherGroup=null;
 
 // Anime-vibrant palette
 const SKY=[0xa8d8f8,0x78c8f8,0xf8b858,0xd0e8f8]; // spring,summer,autumn,winter
@@ -846,7 +849,9 @@ function initThree(){
   groundPlane=new THREE.Mesh(pg,pm);
   groundPlane.rotation.x=-Math.PI/2;groundPlane.position.set(COLS/2,0,ROWS/2);
   scene.add(groundPlane);
+  weatherGroup=new THREE.Group();scene.add(weatherGroup);
   buildTerrainMeshes();
+  initWeatherParticles();
   initSmoke();
   initMinimap();
   window.addEventListener('resize',onResize);
@@ -934,7 +939,99 @@ function updateSeasonVisuals(){
   scene.fog.color.setHex(SKY[state.season]);
   for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){
     const m=terrainMeshes[r]?.[c];if(m)m.material.color.setHex(TCOLORS[state.season][state.tiles[r][c].type]);
+    // Rebuild tree/rock decos to reflect new season colours
+    if(decorGroups[r]?.[c])buildDecos(decorGroups[r][c],r,c,state.tiles[r][c]);
   }
+  // Update building snow caps
+  updateBuildingSnow();
+  // Restart weather particles for new season
+  initWeatherParticles();
+}
+
+function updateBuildingSnow(){
+  // Remove any existing snow caps
+  buildingGroup.children.forEach(g=>{
+    const sc=g.getObjectByName('snowCap');if(sc)g.remove(sc);
+  });
+  if(state.season!==3)return; // only in winter
+  state.buildings.forEach(b=>{
+    const g=buildingMeshes.get(b.id);if(!g||b.constructing)return;
+    const def=BUILDINGS[b.type];const sz=def.size;
+    const cap=new THREE.Group();cap.name='snowCap';
+    // Broad flat snow layer across building top
+    const w=sz*0.95,d=sz*0.95;
+    const snow=new THREE.Mesh(new THREE.BoxGeometry(w,0.07,d),mat(0xdeeeff));
+    const roofY=b.type==='wall'?0.85:b.type==='tower'?2.2:1.45;
+    snow.position.set(0,roofY,0);snow.castShadow=true;cap.add(snow);
+    g.add(cap);
+  });
+}
+
+// Weather particle system (snow in winter, leaves in autumn)
+function initWeatherParticles(){
+  if(weatherGroup){while(weatherGroup.children.length)weatherGroup.remove(weatherGroup.children[0]);}
+  weatherParticles=null;
+  if(state.season===3){
+    // Snow: many small white sprites falling
+    const COUNT=300;
+    const geo=new THREE.BufferGeometry();
+    const pos=new Float32Array(COUNT*3);
+    const vel=new Float32Array(COUNT*3); // vx,vy,vz per particle
+    for(let i=0;i<COUNT;i++){
+      pos[i*3]  =Math.random()*COLS;
+      pos[i*3+1]=Math.random()*12+1;
+      pos[i*3+2]=Math.random()*ROWS;
+      vel[i*3]  =(Math.random()-0.5)*0.008;
+      vel[i*3+1]=-(0.012+Math.random()*0.016);
+      vel[i*3+2]=(Math.random()-0.5)*0.008;
+    }
+    geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+    const mat2=new THREE.PointsMaterial({color:0xddeeff,size:0.12,transparent:true,opacity:0.75,depthWrite:false});
+    const pts=new THREE.Points(geo,mat2);
+    weatherGroup.add(pts);
+    weatherParticles={type:'snow',pts,vel,COUNT};
+  } else if(state.season===2){
+    // Autumn: fewer bigger "leaf" sprites in orange/red
+    const COUNT=80;
+    const geo=new THREE.BufferGeometry();
+    const pos=new Float32Array(COUNT*3);
+    const vel=new Float32Array(COUNT*3);
+    for(let i=0;i<COUNT;i++){
+      pos[i*3]  =Math.random()*COLS;
+      pos[i*3+1]=Math.random()*8+1;
+      pos[i*3+2]=Math.random()*ROWS;
+      vel[i*3]  =(Math.random()-0.5)*0.014;
+      vel[i*3+1]=-(0.008+Math.random()*0.010);
+      vel[i*3+2]=(Math.random()-0.5)*0.014;
+    }
+    geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+    const mat2=new THREE.PointsMaterial({color:0xe06820,size:0.18,transparent:true,opacity:0.7,depthWrite:false});
+    const pts=new THREE.Points(geo,mat2);
+    weatherGroup.add(pts);
+    weatherParticles={type:'leaves',pts,vel,COUNT};
+  }
+}
+
+function tickWeatherParticles(){
+  if(!weatherParticles)return;
+  const{pts,vel,COUNT}=weatherParticles;
+  const pos=pts.geometry.attributes.position.array;
+  const maxY=14, spawnY=13;
+  for(let i=0;i<COUNT;i++){
+    pos[i*3]  +=vel[i*3];
+    pos[i*3+1]+=vel[i*3+1];
+    pos[i*3+2]+=vel[i*3+2];
+    // Wrap: when particle falls below ground, respawn at top
+    if(pos[i*3+1]<-0.5){
+      pos[i*3]  =Math.random()*COLS;
+      pos[i*3+1]=spawnY+Math.random()*2;
+      pos[i*3+2]=Math.random()*ROWS;
+    }
+    // Drift: add gentle sinusoidal sway
+    vel[i*3]+=(Math.random()-0.5)*0.0006;
+    vel[i*3]=Math.max(-0.02,Math.min(0.02,vel[i*3]));
+  }
+  pts.geometry.attributes.position.needsUpdate=true;
 }
 
 // ---- Terrain ----
@@ -967,16 +1064,36 @@ function buildDecos(g,r,c,tile){
 }
 
 function addTree(g,ox,oz,size,hsh){
-  const leafCols=[0x40c830,0x30b820,0x58d840,0x28a818];
-  const c0=leafCols[Math.floor(hsh*4)%4];
-  const c1=leafCols[(Math.floor(hsh*7)+2)%4];
+  const s=state.season;
   const trunkH=size*0.52;
-  const trunk=new THREE.Mesh(new THREE.CylinderGeometry(size*0.11,size*0.15,trunkH,8),mat(0x7a4018));
+  const trunkCol=s===3?0x6a3810:0x7a4018; // darker in winter
+  const trunk=new THREE.Mesh(new THREE.CylinderGeometry(size*0.11,size*0.15,trunkH,8),mat(trunkCol));
   trunk.position.set(ox,0.15+trunkH/2,oz);trunk.castShadow=true;g.add(trunk);
-  // Main Ghibli round leaf mass
+  if(s===3){
+    // Winter: bare branches (thin cylinders) + optional snow blob at top
+    const branchDirs=[0,Math.PI*0.5,Math.PI,Math.PI*1.5,Math.PI*0.25,Math.PI*0.75];
+    branchDirs.forEach((a,i)=>{
+      const bh=size*0.28;
+      const br=new THREE.Mesh(new THREE.CylinderGeometry(size*0.025,size*0.04,bh,5),mat(trunkCol));
+      br.position.set(ox+Math.sin(a)*size*0.22,0.15+trunkH+size*0.1,oz+Math.cos(a)*size*0.22);
+      br.rotation.z=(i%2===0?0.7:-0.7)*(1+i*0.05);br.castShadow=true;g.add(br);
+    });
+    // Snow cap blob
+    const snow=new THREE.Mesh(new THREE.SphereGeometry(size*0.38,8,6),mat(0xe8f0ff));
+    snow.scale.y=0.5;snow.position.set(ox,0.15+trunkH+size*0.18,oz);snow.castShadow=true;g.add(snow);
+    return;
+  }
+  // Leaf colours by season
+  const leafPalettes=[
+    [0x40c830,0x30b820,0x58d840,0x28a818], // spring
+    [0x30c020,0x20a810,0x48d030,0x18a008], // summer
+    [0xe07820,0xc85010,0xd09018,0xb04008], // autumn
+  ];
+  const pal=leafPalettes[s]||leafPalettes[0];
+  const c0=pal[Math.floor(hsh*4)%4];
+  const c1=pal[(Math.floor(hsh*7)+2)%4];
   const main=new THREE.Mesh(new THREE.SphereGeometry(size*0.52,9,7),mat(c0));
   main.scale.y=0.9;main.position.set(ox,0.15+trunkH+size*0.38,oz);main.castShadow=true;g.add(main);
-  // Smaller overlapping blobs for cloud-like silhouette
   [[size*0.32,size*0.52,0],[-size*0.30,size*0.46,size*0.2],[0,size*0.58,-size*0.28],[size*0.18,size*0.62,size*0.25]].forEach(([bx,by,bz])=>{
     const blob=new THREE.Mesh(new THREE.SphereGeometry(size*0.29,8,6),mat(c1));
     blob.position.set(ox+bx,0.15+trunkH+size*0.12+by,oz+bz);blob.castShadow=true;g.add(blob);
@@ -1016,6 +1133,15 @@ function rebuildBuildingMesh(id){
   if(!g){g=new THREE.Group();buildingGroup.add(g);buildingMeshes.set(id,g);}
   while(g.children.length)g.remove(g.children[0]);
   assembleBuildingGeo(b,g);addOutlines(g);
+  // Re-apply snow cap if in winter
+  if(state.season===3&&!b.constructing){
+    const def=BUILDINGS[b.type];const sz=def.size;
+    const cap=new THREE.Group();cap.name='snowCap';
+    const snow=new THREE.Mesh(new THREE.BoxGeometry(sz*0.95,0.07,sz*0.95),mat(0xdeeeff));
+    const roofY=b.type==='wall'?0.85:b.type==='tower'?2.2:1.45;
+    snow.position.set(0,roofY,0);snow.castShadow=true;cap.add(snow);
+    g.add(cap);
+  }
 }
 // Gabled roof helper: two angled panels + ridge beam
 function gableRoof(g,w,d,rh,col,wallY,ox=0,oz=0){
@@ -1740,6 +1866,7 @@ function draw(){
   syncUnits();
   syncBuildings();
   updateSmokeSystem();
+  tickWeatherParticles();
   updateFloatDivs();
   updatePlacementGhost();
   drawMinimap();
@@ -1855,7 +1982,8 @@ function loadGame(){
     raiderMeshes.forEach(g=>unitGroup.remove(g));raiderMeshes.clear();
     terrainGroup.children.length=0;decorGroup.children.length=0;
     buildTerrainMeshes();
-    Object.keys(state.buildings).forEach(id=>addBuildingMesh(state.buildings[id]));
+    state.buildings.forEach(b=>addBuildingMesh(b));
+    updateSeasonVisuals();
     updateCameraPos();
     updateResourceUI();
     log('Game loaded.');
