@@ -1081,8 +1081,12 @@ function showTileInfo(r,c){
   let html=`<b>Tile (${r},${c})</b><br>Terrain: ${tt}`;
   if(bld){
     html+=`<br><br><b>${BUILDINGS[bld.type].name}</b><br>HP: ${bld.hp}/${BUILDINGS[bld.type].maxHp}`;
-    if(bld.constructing)html+='<br><i>Under construction</i>';
-    if(bld.active!==undefined)html+=`<br>Active: ${bld.active?'Yes':'No'}`;
+    if(bld.constructing){
+      const pct=Math.floor((bld.progress/120)*100);
+      html+=`<br>🔨 Building… ${pct}%`;
+    }
+    html+=`<br>Workers: ${bld.workers}`;
+    if(bld.active!==undefined&&!bld.constructing)html+=`<br>Active: ${bld.active?'Yes':'No'}`;
   }
   ic.innerHTML=html;
 }
@@ -1179,14 +1183,37 @@ function initInput(){
       // placeBuilding handles cost check and deduction internally
       if(placeBuilding(t.r,t.c,btype)!==false)setPlacing(null);
     } else {
-      // select colonist or show tile info
-      let hit=null;
+      // Check if clicking a colonist
+      let hitColonist=null;
       state.colonists.forEach(c=>{
         const dx=c.x/TILE-t.c-0.5,dz=c.y/TILE-t.r-0.5;
-        if(Math.abs(dx)<0.5&&Math.abs(dz)<0.5)hit=c.id;
+        if(Math.abs(dx)<0.5&&Math.abs(dz)<0.5)hitColonist=c.id;
       });
-      state.selectedColonist=hit;
-      showTileInfo(t.r,t.c);
+
+      if(hitColonist!==null){
+        // Select the colonist
+        state.selectedColonist=hitColonist;
+        const c=state.colonists.find(x=>x.id===hitColonist);
+        if(c)showColonistInfo(c);
+      } else if(state.selectedColonist!==null){
+        // A colonist is selected — check if clicking a building to assign
+        const bld=state.buildings.find(b=>{
+          const s=BUILDINGS[b.type].size;
+          return t.r>=b.r&&t.r<b.r+s&&t.c>=b.c&&t.c<b.c+s;
+        });
+        if(bld&&bld.hp>0){
+          assignColonistToBuilding(state.selectedColonist,bld.id);
+          const c=state.colonists.find(x=>x.id===state.selectedColonist);
+          if(c)showColonistInfo(c);
+        } else {
+          // Clicked open ground — unassign colonist
+          assignColonistToBuilding(state.selectedColonist,null);
+          const c=state.colonists.find(x=>x.id===state.selectedColonist);
+          if(c)showColonistInfo(c);
+        }
+      } else {
+        showTileInfo(t.r,t.c);
+      }
     }
   });
 
