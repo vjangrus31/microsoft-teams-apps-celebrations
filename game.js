@@ -819,31 +819,116 @@ function assembleBuildingGeo(b,g){
 function createColonistMesh(c){
   const g=new THREE.Group();
   const hue=(c.id*137)%360;
-  const bodyMat=new THREE.MeshLambertMaterial({color:new THREE.Color(`hsl(${hue},55%,40%)`)});
-  const headMat=new THREE.MeshLambertMaterial({color:0xf0c890});
-  const body=new THREE.Mesh(new THREE.CylinderGeometry(0.18,0.18,0.45,8),bodyMat);
-  body.position.y=0.25;g.add(body);
-  const head=new THREE.Mesh(new THREE.SphereGeometry(0.16,8,6),headMat);
-  head.position.y=0.62;g.add(head);
-  if(c.role==='soldier'){
-    const helm=new THREE.Mesh(new THREE.SphereGeometry(0.19,8,6,0,Math.PI*2,0,Math.PI*0.6),new THREE.MeshLambertMaterial({color:0x8090b0}));
-    helm.position.y=0.68;g.add(helm);
-  }
-  // selection ring (hidden by default)
+  const skinMat=new THREE.MeshLambertMaterial({color:0xf0c890});
+  const shirtMat=new THREE.MeshLambertMaterial({color:new THREE.Color(`hsl(${hue},55%,40%)`)});
+  const pantsMat=new THREE.MeshLambertMaterial({color:new THREE.Color(`hsl(${(hue+30)%360},30%,25%)`)});
+  const hairMat=new THREE.MeshLambertMaterial({color:new THREE.Color(`hsl(${(c.id*53)%360},40%,20%)`)});
+  const bootMat=new THREE.MeshLambertMaterial({color:0x3a2010});
+
+  // Feet / boots
+  [[-0.07,0.07],[0.07,0.07]].forEach(([x,y])=>{
+    const boot=new THREE.Mesh(new THREE.BoxGeometry(0.08,0.08,0.12),bootMat);
+    boot.position.set(x,y,0.02);g.add(boot);
+  });
+  // Legs
+  [[-0.07,0.18],[0.07,0.18]].forEach(([x,y])=>{
+    const leg=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.05,0.18,6),pantsMat);
+    leg.position.set(x,y,0);g.add(leg);
+  });
+  // Torso (shirt)
+  const torso=new THREE.Mesh(new THREE.BoxGeometry(0.24,0.22,0.14),shirtMat);
+  torso.position.y=0.38;g.add(torso);
+  // Arms
+  [[-0.16,0.36],[0.16,0.36]].forEach(([x,y])=>{
+    const arm=new THREE.Mesh(new THREE.CylinderGeometry(0.035,0.04,0.2,6),shirtMat);
+    arm.position.set(x,y,0);g.add(arm);
+    // Hands
+    const hand=new THREE.Mesh(new THREE.SphereGeometry(0.035,6,4),skinMat);
+    hand.position.set(x,y-0.12,0);g.add(hand);
+  });
+  // Head
+  const head=new THREE.Mesh(new THREE.SphereGeometry(0.12,8,6),skinMat);
+  head.position.y=0.58;g.add(head);
+  // Hair
+  const hair=new THREE.Mesh(new THREE.SphereGeometry(0.125,8,6,0,Math.PI*2,0,Math.PI*0.55),hairMat);
+  hair.position.y=0.6;g.add(hair);
+
+  // Job indicator (carried tool)
+  const toolGroup=new THREE.Group();toolGroup.name='tool';toolGroup.visible=false;
+  // Axe handle
+  const handle=new THREE.Mesh(new THREE.CylinderGeometry(0.015,0.015,0.28,4),new THREE.MeshLambertMaterial({color:0x8a5020}));
+  handle.rotation.z=0.4;handle.position.set(0.22,0.42,0);toolGroup.add(handle);
+  // Axe head
+  const axeHead=new THREE.Mesh(new THREE.BoxGeometry(0.03,0.1,0.06),new THREE.MeshLambertMaterial({color:0x808888}));
+  axeHead.position.set(0.3,0.52,0);toolGroup.add(axeHead);
+  g.add(toolGroup);
+
+  // Soldier helmet + sword
+  const soldierGroup=new THREE.Group();soldierGroup.name='soldier';soldierGroup.visible=false;
+  const helm=new THREE.Mesh(new THREE.SphereGeometry(0.14,8,6,0,Math.PI*2,0,Math.PI*0.6),new THREE.MeshLambertMaterial({color:0x707880}));
+  helm.position.y=0.63;soldierGroup.add(helm);
+  const sword=new THREE.Mesh(new THREE.BoxGeometry(0.02,0.32,0.04),new THREE.MeshLambertMaterial({color:0xb0b8c0}));
+  sword.position.set(0.2,0.38,0);sword.rotation.z=-0.2;soldierGroup.add(sword);
+  const hilt=new THREE.Mesh(new THREE.BoxGeometry(0.06,0.02,0.06),new THREE.MeshLambertMaterial({color:0x6a4020}));
+  hilt.position.set(0.2,0.24,0);soldierGroup.add(hilt);
+  g.add(soldierGroup);
+
+  // Selection ring
   const ring=new THREE.Mesh(new THREE.RingGeometry(0.25,0.32,16),new THREE.MeshBasicMaterial({color:0x40ff80,side:THREE.DoubleSide,transparent:true,opacity:0.85}));
   ring.rotation.x=-Math.PI/2;ring.position.y=0.02;ring.visible=false;ring.name='selring';
   g.add(ring);
+
   g.position.set(c.x/TILE,0,c.y/TILE);
   unitGroup.add(g);colonistMeshes.set(c.id,g);
 }
 function createRaiderMesh(r){
   const g=new THREE.Group();
-  const body=new THREE.Mesh(new THREE.CylinderGeometry(0.2,0.2,0.5,8),new THREE.MeshLambertMaterial({color:0x601818}));
-  body.position.y=0.27;g.add(body);
-  const head=new THREE.Mesh(new THREE.SphereGeometry(0.17,8,6),new THREE.MeshLambertMaterial({color:0x3a2010}));
-  head.position.y=0.66;g.add(head);
-  const helm=new THREE.Mesh(new THREE.ConeGeometry(0.2,0.25,8),new THREE.MeshLambertMaterial({color:0x404040}));
-  helm.position.y=0.82;g.add(helm);
+  const armorMat=new THREE.MeshLambertMaterial({color:0x3a2020});
+  const darkMat=new THREE.MeshLambertMaterial({color:0x1a0808});
+  const metalMat=new THREE.MeshLambertMaterial({color:0x505058});
+  const skinMat=new THREE.MeshLambertMaterial({color:0x6a4030});
+  // Boots
+  [[-0.08,0.07],[0.08,0.07]].forEach(([x,y])=>{
+    const boot=new THREE.Mesh(new THREE.BoxGeometry(0.1,0.09,0.14),darkMat);
+    boot.position.set(x,y,0.02);g.add(boot);
+  });
+  // Legs
+  [[-0.08,0.2],[0.08,0.2]].forEach(([x,y])=>{
+    const leg=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.06,0.2,6),armorMat);
+    leg.position.set(x,y,0);g.add(leg);
+  });
+  // Torso (armored)
+  const torso=new THREE.Mesh(new THREE.BoxGeometry(0.28,0.24,0.16),armorMat);
+  torso.position.y=0.42;g.add(torso);
+  // Shoulder pads
+  [[-0.18,0.5],[0.18,0.5]].forEach(([x,y])=>{
+    const pad=new THREE.Mesh(new THREE.SphereGeometry(0.06,6,4),metalMat);
+    pad.position.set(x,y,0);g.add(pad);
+  });
+  // Arms
+  [[-0.18,0.36],[0.18,0.36]].forEach(([x,y])=>{
+    const arm=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.045,0.22,6),armorMat);
+    arm.position.set(x,y,0);g.add(arm);
+  });
+  // Head
+  const head=new THREE.Mesh(new THREE.SphereGeometry(0.13,8,6),skinMat);
+  head.position.y=0.62;g.add(head);
+  // Helmet
+  const helm=new THREE.Mesh(new THREE.SphereGeometry(0.145,8,6,0,Math.PI*2,0,Math.PI*0.6),metalMat);
+  helm.position.y=0.66;g.add(helm);
+  const helmSpike=new THREE.Mesh(new THREE.ConeGeometry(0.03,0.15,6),metalMat);
+  helmSpike.position.y=0.8;g.add(helmSpike);
+  // Weapon — mace/axe
+  const wHandle=new THREE.Mesh(new THREE.CylinderGeometry(0.018,0.018,0.35,4),new THREE.MeshLambertMaterial({color:0x5a3010}));
+  wHandle.rotation.z=0.5;wHandle.position.set(0.26,0.44,0);g.add(wHandle);
+  const wHead=new THREE.Mesh(new THREE.DodecahedronGeometry(0.06,0),metalMat);
+  wHead.position.set(0.36,0.56,0);g.add(wHead);
+  // Shield on left arm
+  const shield=new THREE.Mesh(new THREE.BoxGeometry(0.04,0.2,0.18),new THREE.MeshLambertMaterial({color:0x5a2010}));
+  shield.position.set(-0.22,0.38,0);g.add(shield);
+  const shieldBoss=new THREE.Mesh(new THREE.SphereGeometry(0.035,6,4),metalMat);
+  shieldBoss.position.set(-0.24,0.38,0);g.add(shieldBoss);
+
   g.position.set(r.x/TILE,0,r.y/TILE);
   unitGroup.add(g);raiderMeshes.set(r.id,g);
 }
@@ -855,6 +940,19 @@ function syncUnits(){
     g.position.set(c.x/TILE,0,c.y/TILE);
     const ring=g.getObjectByName('selring');
     if(ring)ring.visible=(state.selectedColonist===c.id);
+    // Toggle tool/soldier indicators based on job
+    const tool=g.getObjectByName('tool');
+    const soldier=g.getObjectByName('soldier');
+    const b=c.job!==null?state.buildings[c.job]:null;
+    const isSoldier=b&&b.type==='barracks';
+    const hasToolJob=b&&(b.constructing||b.type==='woodcutter'||b.type==='quarry'||b.type==='farm');
+    if(tool)tool.visible=!!hasToolJob;
+    if(soldier)soldier.visible=!!isSoldier;
+    // Simple walk bob animation
+    if(c.path&&c.path.length>0){
+      const bob=Math.sin(state.tick*0.3+c.id)*0.03;
+      g.position.y=bob;
+    }
   });
   colonistMeshes.forEach((g,id)=>{
     if(!state.colonists.find(c=>c.id===id)){unitGroup.remove(g);colonistMeshes.delete(id);}
@@ -1153,9 +1251,10 @@ function initInput(){
       const{cx,cy}=getCanvasXY(e);
       const sdx=cx-state.dragStart.cx;
       const sdy=cy-state.dragStart.cy;
-      const scale=state.camZoom/renderer.domElement.clientHeight;
-      state.camTarget.x=state.dragStart.tx-(sdx-sdy)*scale*0.7;
-      state.camTarget.z=state.dragStart.tz-(sdx+sdy)*scale*0.7;
+      const scale=state.camZoom/renderer.domElement.clientHeight*0.707;
+      // Isometric grab-and-drag: camera right=(1,0,-1)/√2, camera down=(1,0,1)/√2
+      state.camTarget.x=state.dragStart.tx-(sdx+sdy)*scale;
+      state.camTarget.z=state.dragStart.tz+(sdx-sdy)*scale;
       clampCameraTarget();updateCameraPos();
       return;
     }
