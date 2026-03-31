@@ -561,7 +561,8 @@ let mmCanvas,mmCtx;
 const SKY=[0x87ceeb,0x9ad8f5,0xd07030,0xc0d8e8];
 const TCOLORS=[[0x5aaa48,0x2c561a,0x787068,0x2060cc,0x9a7840],[0x5aba4a,0x386820,0x787068,0x1848b0,0x9a7840],[0x9a7040,0x4a3410,0x787068,0x1848a0,0x8a6830],[0xb0b8c0,0x485850,0x909098,0x3060a0,0x909898]];
 
-function mat(col,opts={}){return new THREE.MeshLambertMaterial({color:col,...opts});}
+function mat(col,opts={}){return new THREE.MeshStandardMaterial({color:col,roughness:0.82,metalness:0.05,...opts});}
+function metalMat(col){return new THREE.MeshStandardMaterial({color:col,roughness:0.35,metalness:0.7});}
 function bmat(col){return new THREE.MeshBasicMaterial({color:col});}
 
 function initThree(){
@@ -576,12 +577,18 @@ function initThree(){
   scene.background=new THREE.Color(SKY[state.season]);
   scene.fog=new THREE.FogExp2(SKY[state.season],0.016);
   setupCamera();
-  scene.add(new THREE.AmbientLight(0x8090b0,0.55));
-  const sun=new THREE.DirectionalLight(0xfff8e0,1.0);
-  sun.position.set(20,30,10);sun.castShadow=true;
-  sun.shadow.mapSize.set(1024,1024);
-  const sc=sun.shadow.camera;sc.left=-55;sc.right=55;sc.top=45;sc.bottom=-45;sc.near=1;sc.far=150;
+  // Hemisphere: sky blue top, warm ground bounce bottom
+  scene.add(new THREE.HemisphereLight(0x90b8d8,0x4a3820,0.7));
+  // Key sun light
+  const sun=new THREE.DirectionalLight(0xfff4d0,1.3);
+  sun.position.set(25,38,12);sun.castShadow=true;
+  sun.shadow.mapSize.set(2048,2048);
+  const sc=sun.shadow.camera;sc.left=-60;sc.right=60;sc.top=50;sc.bottom=-50;sc.near=1;sc.far=180;
+  sun.shadow.bias=-0.0005;
   scene.add(sun);
+  // Soft fill from opposite side
+  const fill=new THREE.DirectionalLight(0x8090c0,0.3);
+  fill.position.set(-15,20,-10);scene.add(fill);
   terrainGroup=new THREE.Group();scene.add(terrainGroup);
   decorGroup=new THREE.Group();scene.add(decorGroup);
   buildingGroup=new THREE.Group();scene.add(buildingGroup);
@@ -819,13 +826,13 @@ function assembleBuildingGeo(b,g){
 function createColonistMesh(c){
   const g=new THREE.Group();
   const hue=(c.id*137)%360;
-  const skinMat=new THREE.MeshLambertMaterial({color:0xf0c890});
-  const shirtMat=new THREE.MeshLambertMaterial({color:new THREE.Color(`hsl(${hue},55%,40%)`)});
-  const pantsMat=new THREE.MeshLambertMaterial({color:new THREE.Color(`hsl(${(hue+30)%360},30%,25%)`)});
-  const hairMat=new THREE.MeshLambertMaterial({color:new THREE.Color(`hsl(${(c.id*53)%360},40%,20%)`)});
-  const bootMat=new THREE.MeshLambertMaterial({color:0x3a2010});
-  const woodMat=new THREE.MeshLambertMaterial({color:0x8a5020});
-  const metalMat=new THREE.MeshLambertMaterial({color:0x808888});
+  const skinMat=new THREE.MeshStandardMaterial({roughness:0.8,metalness:0.05,color:0xf0c890});
+  const shirtMat=new THREE.MeshStandardMaterial({roughness:0.8,metalness:0.05,color:new THREE.Color(`hsl(${hue},55%,40%)`)});
+  const pantsMat=new THREE.MeshStandardMaterial({roughness:0.8,metalness:0.05,color:new THREE.Color(`hsl(${(hue+30)%360},30%,25%)`)});
+  const hairMat=new THREE.MeshStandardMaterial({roughness:0.8,metalness:0.05,color:new THREE.Color(`hsl(${(c.id*53)%360},40%,20%)`)});
+  const bootMat=new THREE.MeshStandardMaterial({roughness:0.8,metalness:0.05,color:0x3a2010});
+  const woodMat=new THREE.MeshStandardMaterial({roughness:0.8,metalness:0.05,color:0x8a5020});
+  const metalMat=new THREE.MeshStandardMaterial({roughness:0.8,metalness:0.05,color:0x808888});
 
   // Left leg pivot (at hip)
   const lLeg=new THREE.Group();lLeg.name='lLeg';lLeg.position.set(-0.07,0.27,0);
@@ -880,11 +887,11 @@ function createColonistMesh(c){
 
   // Soldier gear (attached to body group)
   const soldierGroup=new THREE.Group();soldierGroup.name='soldier';soldierGroup.visible=false;
-  const helm=new THREE.Mesh(new THREE.SphereGeometry(0.14,8,6,0,Math.PI*2,0,Math.PI*0.6),new THREE.MeshLambertMaterial({color:0x707880}));
+  const helm=new THREE.Mesh(new THREE.SphereGeometry(0.14,8,6,0,Math.PI*2,0,Math.PI*0.6),new THREE.MeshStandardMaterial({roughness:0.8,metalness:0.05,color:0x707880}));
   helm.position.y=0.34;soldierGroup.add(helm);
-  const sword=new THREE.Mesh(new THREE.BoxGeometry(0.02,0.32,0.04),new THREE.MeshLambertMaterial({color:0xb0b8c0}));
+  const sword=new THREE.Mesh(new THREE.BoxGeometry(0.02,0.32,0.04),new THREE.MeshStandardMaterial({roughness:0.8,metalness:0.05,color:0xb0b8c0}));
   sword.position.set(0.2,0.08,0);sword.rotation.z=-0.2;soldierGroup.add(sword);
-  const hilt=new THREE.Mesh(new THREE.BoxGeometry(0.06,0.02,0.06),new THREE.MeshLambertMaterial({color:0x6a4020}));
+  const hilt=new THREE.Mesh(new THREE.BoxGeometry(0.06,0.02,0.06),new THREE.MeshStandardMaterial({roughness:0.8,metalness:0.05,color:0x6a4020}));
   hilt.position.set(0.18,-0.04,0);soldierGroup.add(hilt);
   body.add(soldierGroup);
 
@@ -900,10 +907,10 @@ function createColonistMesh(c){
 }
 function createRaiderMesh(r){
   const g=new THREE.Group();
-  const armorMat=new THREE.MeshLambertMaterial({color:0x3a2020});
-  const darkMat=new THREE.MeshLambertMaterial({color:0x1a0808});
-  const metalMat=new THREE.MeshLambertMaterial({color:0x505058});
-  const skinMat=new THREE.MeshLambertMaterial({color:0x6a4030});
+  const armorMat=new THREE.MeshStandardMaterial({roughness:0.8,metalness:0.05,color:0x3a2020});
+  const darkMat=new THREE.MeshStandardMaterial({roughness:0.8,metalness:0.05,color:0x1a0808});
+  const metalMat=new THREE.MeshStandardMaterial({roughness:0.8,metalness:0.05,color:0x505058});
+  const skinMat=new THREE.MeshStandardMaterial({roughness:0.8,metalness:0.05,color:0x6a4030});
   // Boots
   [[-0.08,0.07],[0.08,0.07]].forEach(([x,y])=>{
     const boot=new THREE.Mesh(new THREE.BoxGeometry(0.1,0.09,0.14),darkMat);
@@ -936,12 +943,12 @@ function createRaiderMesh(r){
   const helmSpike=new THREE.Mesh(new THREE.ConeGeometry(0.03,0.15,6),metalMat);
   helmSpike.position.y=0.8;g.add(helmSpike);
   // Weapon — mace/axe
-  const wHandle=new THREE.Mesh(new THREE.CylinderGeometry(0.018,0.018,0.35,4),new THREE.MeshLambertMaterial({color:0x5a3010}));
+  const wHandle=new THREE.Mesh(new THREE.CylinderGeometry(0.018,0.018,0.35,4),new THREE.MeshStandardMaterial({roughness:0.8,metalness:0.05,color:0x5a3010}));
   wHandle.rotation.z=0.5;wHandle.position.set(0.26,0.44,0);g.add(wHandle);
   const wHead=new THREE.Mesh(new THREE.DodecahedronGeometry(0.06,0),metalMat);
   wHead.position.set(0.36,0.56,0);g.add(wHead);
   // Shield on left arm
-  const shield=new THREE.Mesh(new THREE.BoxGeometry(0.04,0.2,0.18),new THREE.MeshLambertMaterial({color:0x5a2010}));
+  const shield=new THREE.Mesh(new THREE.BoxGeometry(0.04,0.2,0.18),new THREE.MeshStandardMaterial({roughness:0.8,metalness:0.05,color:0x5a2010}));
   shield.position.set(-0.22,0.38,0);g.add(shield);
   const shieldBoss=new THREE.Mesh(new THREE.SphereGeometry(0.035,6,4),metalMat);
   shieldBoss.position.set(-0.24,0.38,0);g.add(shieldBoss);
@@ -1254,6 +1261,7 @@ function draw(){
 }
 
 // ── UI helpers ───────────────────────────────────────────────────────────────
+const JOB_LABELS={farm:'Farmer',woodcutter:'Woodcutter',quarry:'Miner',barracks:'Soldier',storehouse:'Hauler'};
 function updateResourceUI(){
   document.getElementById('res-wood').textContent=Math.floor(state.resources.wood);
   document.getElementById('res-stone').textContent=Math.floor(state.resources.stone);
@@ -1264,6 +1272,38 @@ function updateResourceUI(){
   document.getElementById('day-label').textContent='Day '+state.day;
   const ra=document.getElementById('raid-alert');
   if(state.raiders.length>0)ra.classList.add('active');else ra.classList.remove('active');
+  updateColonistRoster();
+}
+function updateColonistRoster(){
+  const list=document.getElementById('roster-list');
+  if(!list)return;
+  list.innerHTML='';
+  state.colonists.forEach(c=>{
+    const b=c.job!==null?state.buildings[c.job]:null;
+    const jobLabel=b?(b.constructing?'Builder':JOB_LABELS[b.type]||b.type):'Idle';
+    const hpPct=Math.max(0,Math.min(100,(c.hp/c.maxHp)*100));
+    const hpColor=hpPct>60?'#40c070':hpPct>30?'#c0a020':'#c03030';
+    const hue=(c.id*137)%360;
+    const row=document.createElement('div');
+    row.className='colonist-row'+(state.selectedColonist===c.id?' selected':'');
+    row.innerHTML=`
+      <div class="col-dot" style="background:hsl(${hue},55%,45%)"></div>
+      <div class="col-name">${c.name}</div>
+      <div class="col-job">${jobLabel}</div>
+      <div class="col-hp">
+        <div class="col-hp-bar"><div class="col-hp-fill" style="width:${hpPct}%;background:${hpColor}"></div></div>
+      </div>`;
+    row.addEventListener('click',()=>{
+      state.selectedColonist=c.id;
+      // Pan camera to colonist
+      state.camTarget.x=c.x/TILE;
+      state.camTarget.z=c.y/TILE;
+      clampCameraTarget();updateCameraPos();
+      showColonistInfo(c);
+      updateColonistRoster();
+    });
+    list.appendChild(row);
+  });
 }
 function log(msg){
   const lc=document.getElementById('log-content');
@@ -1390,12 +1430,11 @@ function initInput(){
       });
 
       if(hitColonist!==null){
-        // Select the colonist
         state.selectedColonist=hitColonist;
         const c=state.colonists.find(x=>x.id===hitColonist);
         if(c)showColonistInfo(c);
+        updateColonistRoster();
       } else if(state.selectedColonist!==null){
-        // A colonist is selected — check if clicking a building to assign
         const bld=state.buildings.find(b=>{
           const s=BUILDINGS[b.type].size;
           return t.r>=b.r&&t.r<b.r+s&&t.c>=b.c&&t.c<b.c+s;
@@ -1404,11 +1443,12 @@ function initInput(){
           assignColonistToBuilding(state.selectedColonist,bld.id);
           const c=state.colonists.find(x=>x.id===state.selectedColonist);
           if(c)showColonistInfo(c);
+          updateColonistRoster();
         } else {
-          // Clicked open ground — unassign colonist
           assignColonistToBuilding(state.selectedColonist,null);
           const c=state.colonists.find(x=>x.id===state.selectedColonist);
           if(c)showColonistInfo(c);
+          updateColonistRoster();
         }
       } else {
         showTileInfo(t.r,t.c);
