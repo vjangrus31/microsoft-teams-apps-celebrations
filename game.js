@@ -56,7 +56,7 @@ const EVENTS = [
     ]},
   { id:'wolves',    title:'Wolf Pack',          body:'A pack of wolves has been spotted near the settlement!',
     color:'#e06030', choices:[
-      { label:'Organize a hunt', fn:s=>{ const wolves=2+Math.floor(s.day/20); for(let i=0;i<wolves;i++) s.raiders.push({id:Date.now()+i,x:(Math.random()<0.5?1:COLS-2)*TILE,y:Math.floor(Math.random()*ROWS)*TILE,hp:15,maxHp:15,attackCooldown:0,blinkTimer:0,_wolf:true}); return`${wolves} wolves attacking!`;} },
+      { label:'Organize a hunt', fn:s=>{ const wolves=2+Math.floor(s.day/20); for(let i=0;i<wolves;i++) s.raiders.push({id:Date.now()+i,x:(Math.random()<0.5?1:COLS-2)*TILE,y:Math.floor(Math.random()*ROWS)*TILE,hp:15,maxHp:15,attackCooldown:0,blinkTimer:0,_wolf:true,path:[],pathGoal:null,pathCooldown:0,_wallTarget:null}); soundRaidAlarm(); return`${wolves} wolves attacking!`;} },
       { label:'Reinforce walls', fn:s=>{ s.nextRaidIn+=200;return'Wolves kept at bay for now.';} },
     ]},
   { id:'sickness',  title:'Illness Spreads',    body:'A sickness moves through the settlement.',
@@ -183,6 +183,7 @@ function addFloat(wx,wz,text,color) {
 function spawnRaid() {
   const size=1+Math.floor(state.day/15);
   log(`⚔ Raiders approaching! (${size} attackers)`);
+  soundRaidAlarm();
   for(let i=0;i<size;i++){
     const edge=Math.floor(Math.random()*4);
     let r,c;
@@ -196,6 +197,7 @@ function spawnRaid() {
       hp:30+Math.floor(state.day/5)*5,
       maxHp:30+Math.floor(state.day/5)*5,
       attackCooldown:0, blinkTimer:Math.floor(Math.random()*60),
+      path:[],pathGoal:null,pathCooldown:0,_wallTarget:null,
     });
   }
 }
@@ -206,6 +208,7 @@ function updateRaiders() {
   state.raiders.forEach(raider=>{
     raider.blinkTimer=(raider.blinkTimer+1)%60;
     if(raider.attackCooldown>0){raider.attackCooldown--;return;}
+    // Find nearest non-wall target (colonist or building)
     let nd=Infinity,nx=null,ny=null,nc=null,nb=null;
     state.colonists.forEach(c=>{
       const dx=c.x-raider.x,dy=c.y-raider.y,d=Math.sqrt(dx*dx+dy*dy);
@@ -219,31 +222,69 @@ function updateRaiders() {
     if(nx===null)return;
     const attackRange=TILE*0.9;
     if(nd>attackRange){
-      const dx=nx-raider.x,dy=ny-raider.y,dist=Math.sqrt(dx*dx+dy*dy),speed=0.7;
-      const nnx=raider.x+(dx/dist)*speed,nny=raider.y+(dy/dist)*speed;
-      const tc=Math.floor(nnx/TILE),tr=Math.floor(nny/TILE);
-      const tile=state.tiles[tr]?.[tc];
-      if(tile&&tile.building!==null){
-        const bk=state.buildings[tile.building];
-        if(bk&&BUILDINGS[bk.type].isBarrier){
-          const tc2=Math.floor((raider.x+(dx/dist)*speed)/TILE),tr2=Math.floor(raider.y/TILE);
-          const t2=state.tiles[tr2]?.[tc2];
-          if(!t2||t2.building===null||!BUILDINGS[state.buildings[t2.building]?.type]?.isBarrier)
-            raider.x=raider.x+(dx/dist)*speed;
-          else raider.y=raider.y+(dy/dist)*speed;
-          return;
+      const goalR=Math.max(0,Math.min(ROWS-1,Math.floor(ny/TILE)));
+      const goalC=Math.max(0,Math.min(COLS-1,Math.floor(nx/TILE)));
+      const curR=Math.max(0,Math.min(ROWS-1,Math.floor(raider.y/TILE)));
+      const curC=Math.max(0,Math.min(COLS-1,Math.floor(raider.x/TILE)));
+      // Ensure path fields exist (for raiders created before this update)
+      if(!raider.path)raider.path=[];
+      if(!raider.pathCooldown)raider.pathCooldown=0;
+      // Recompute path when goal changes, path empty, or cooldown elapsed
+      const goalChanged=!raider.pathGoal||raider.pathGoal.r!==goalR||raider.pathGoal.c!==goalC;
+      if(goalChanged||raider.path.length===0||raider.pathCooldown<=0){
+        raider.path=astar(curR,curC,goalR,goalC)||[];
+        raider.pathGoal={r:goalR,c:goalC};
+        raider.pathCooldown=18;
+        // If A* returns no path (completely walled off), find nearest wall to attack
+        if(raider.path.length===0&&(curR!==goalR||curC!==goalC)){
+          let nw=null,nwd=Infinity;
+          state.buildings.filter(b=>b.type==='wall'&&b.hp>0).forEach(b=>{
+            const bx=(b.c+0.5)*TILE,by=(b.r+0.5)*TILE;
+            const dx=bx-raider.x,dy=by-raider.y,d=Math.sqrt(dx*dx+dy*dy);
+            if(d<nwd){nwd=d;nw=b;}
+          });
+          raider._wallTarget=nw;
+        } else {
+          raider._wallTarget=null;
         }
       }
-      raider.x=nnx;raider.y=nny;
+      if(raider.pathCooldown>0)raider.pathCooldown--;
+      // Mode 1: punch through wall
+      if(raider._wallTarget&&raider._wallTarget.hp>0){
+        const wbx=(raider._wallTarget.c+0.5)*TILE,wby=(raider._wallTarget.r+0.5)*TILE;
+        const dx=wbx-raider.x,dy=wby-raider.y,dist=Math.sqrt(dx*dx+dy*dy);
+        if(dist>attackRange){
+          raider.x+=(dx/dist)*0.7;raider.y+=(dy/dist)*0.7;
+        } else {
+          raider.attackCooldown=60;
+          raider._wallTarget.hp-=15;
+          addFloat(wbx/TILE,wby/TILE,'-15','#ff6644');
+          soundHit();
+          if(raider._wallTarget.hp<=0){
+            log('⚠ Wall section breached!');
+            raider._wallTarget.hp=0;rebuildBuildingMesh(raider._wallTarget.id);
+            raider._wallTarget=null;raider.path=[];raider.pathCooldown=0;
+          }
+        }
+      // Mode 2: follow A* path around walls
+      } else if(raider.path.length>0){
+        const next=raider.path[0];
+        const tx=(next.c+0.5)*TILE,ty=(next.r+0.5)*TILE;
+        const dx=tx-raider.x,dy=ty-raider.y,dist=Math.sqrt(dx*dx+dy*dy);
+        if(dist<3)raider.path.shift();
+        else{raider.x+=(dx/dist)*0.7;raider.y+=(dy/dist)*0.7;}
+      // Mode 3: direct movement (no walls in the way)
+      } else {
+        const dx=nx-raider.x,dy=ny-raider.y,dist=Math.sqrt(dx*dx+dy*dy);
+        if(dist>0.1){raider.x+=(dx/dist)*0.7;raider.y+=(dy/dist)*0.7;}
+      }
     } else {
       raider.attackCooldown=60;
       if(nc){
-        nc.hp-=10;
-        addFloat(nc.x/TILE,nc.y/TILE,'-10','#ff4444');
+        nc.hp-=10;addFloat(nc.x/TILE,nc.y/TILE,'-10','#ff4444');soundHit();
         if(nc.hp<=0)killColonist(nc.id);
       } else if(nb){
-        nb.hp-=15;
-        addFloat(nx/TILE,ny/TILE,'-15','#ff6644');
+        nb.hp-=15;addFloat(nx/TILE,ny/TILE,'-15','#ff6644');soundHit();
         if(nb.hp<=0){log(`⚠ ${BUILDINGS[nb.type].name} destroyed!`);nb.hp=0;rebuildBuildingMesh(nb.id);}
       }
     }
@@ -255,7 +296,7 @@ function killColonist(id) {
   if(idx===-1)return;
   const c=state.colonists[idx];
   if(c.job!==null){const b=state.buildings[c.job];if(b)b.workers=Math.max(0,b.workers-1);}
-  log(`💀 ${c.name} has died`);
+  log(`💀 ${c.name} has died`);soundColonistDie();
   const mesh=colonistMeshes.get(id);
   if(mesh){unitGroup.remove(mesh);colonistMeshes.delete(id);}
   state.colonists.splice(idx,1);
@@ -478,7 +519,7 @@ function tick(){
     b.progress+=buildPower; // more builders = faster
     if(b.progress>=120){
       b.constructing=false;b.active=true;b.progress=120;
-      log(`✅ ${BUILDINGS[b.type].name} complete`);
+      log(`✅ ${BUILDINGS[b.type].name} complete`);soundBuildComplete();
       if(b.type==='house'){
         state.housing+=BUILDINGS.house.housing;
         const toSpawn=Math.min(BUILDINGS.house.housing,Math.floor(state.resources.food/5));
@@ -490,6 +531,26 @@ function tick(){
       assignJobs();rebuildBuildingMesh(b.id);
     }
   });
+  // Hammer sound: fire once per ~3s when any building is under construction
+  if(t%15===0&&state.buildings.some(b=>b.constructing&&b.workers>0))soundHammer();
+  // Auto-repair: assigned workers slowly restore HP to damaged buildings
+  if(t%5===0){
+    state.colonists.forEach(c=>{
+      if(c.job===null)return;
+      const b=state.buildings[c.job];
+      if(!b||b.constructing||b.hp<=0)return;
+      const maxHp=BUILDINGS[b.type].maxHp;
+      if(b.hp>=maxHp)return;
+      const sz=BUILDINGS[b.type].size;
+      const bx=(b.c+sz/2)*TILE,by=(b.r+sz/2)*TILE;
+      const dx=c.x-bx,dy=c.y-by;
+      if(Math.sqrt(dx*dx+dy*dy)>TILE*2)return;
+      const rate=c.traits?.includes('strong')?0.3:0.15;
+      const wasLow=b.hp<maxHp;
+      b.hp=Math.min(maxHp,b.hp+rate);
+      if(wasLow&&b.hp>=maxHp)log(`🔧 ${BUILDINGS[b.type].name} fully repaired`);
+    });
+  }
   // Production + depletion
   state.buildings.forEach(b=>{
     if(!b.active)return;
@@ -1600,10 +1661,17 @@ function showTileInfo(r,c){
   const bld=Object.values(state.buildings).find(b=>{const s=BUILDINGS[b.type].size;return r>=b.r&&r<b.r+s&&c>=b.c&&c<b.c+s;});
   let html=`<b>Tile (${r},${c})</b><br>Terrain: ${tt}`;
   if(bld){
-    html+=`<br><br><b>${BUILDINGS[bld.type].name}</b><br>HP: ${bld.hp}/${BUILDINGS[bld.type].maxHp}`;
+    const maxHp=BUILDINGS[bld.type].maxHp;
+    const hpPct=Math.floor((bld.hp/maxHp)*100);
+    const hpCol=hpPct>60?'#70d070':hpPct>30?'#d0a020':'#d04030';
+    html+=`<br><br><b>${BUILDINGS[bld.type].name}</b>`;
+    html+=`<br>HP: <span style="color:${hpCol}">${Math.ceil(bld.hp)}/${maxHp}</span>`;
     if(bld.constructing){
       const pct=Math.floor((bld.progress/120)*100);
       html+=`<br>🔨 Building… ${pct}%`;
+    } else if(bld.hp<maxHp&&bld.hp>0){
+      html+=`<br><span style="color:#d09020">⚠ Damaged (${hpPct}%)</span>`;
+      html+=`<br><span style="color:#60b080;font-size:10px">Assign worker to repair</span>`;
     }
     html+=`<br>Workers: ${bld.workers}`;
     if(bld.active!==undefined&&!bld.constructing)html+=`<br>Active: ${bld.active?'Yes':'No'}`;
@@ -1797,12 +1865,92 @@ function resetGame(){
   // Reload page for cleanest reset
   location.reload();
 }
+// ── Sound Engine (Web Audio API — no files needed) ────────────────────────────
+let audioCtx=null;
+let _ambientStarted=false;
+function initAudio(){
+  const unlock=()=>{
+    if(audioCtx){if(audioCtx.state==='suspended')audioCtx.resume();return;}
+    try{audioCtx=new(window.AudioContext||window.webkitAudioContext)();startAmbient();}catch(e){}
+  };
+  document.addEventListener('click',unlock);
+  document.addEventListener('keydown',unlock);
+}
+function _tone(freq,type,dur,vol,delay=0){
+  if(!audioCtx||audioCtx.state==='suspended')return;
+  try{
+    const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+    o.connect(g);g.connect(audioCtx.destination);
+    o.type=type;o.frequency.value=freq;
+    const t=audioCtx.currentTime+delay;
+    g.gain.setValueAtTime(0.001,t);
+    g.gain.linearRampToValueAtTime(vol,t+0.01);
+    g.gain.exponentialRampToValueAtTime(0.001,t+Math.max(0.01,dur));
+    o.start(t);o.stop(t+dur+0.06);
+  }catch(e){}
+}
+function _noise(dur,vol,filtFreq=600,Q=1.5){
+  if(!audioCtx||audioCtx.state==='suspended')return;
+  try{
+    const sr=audioCtx.sampleRate,len=Math.max(1,Math.ceil(sr*dur));
+    const buf=audioCtx.createBuffer(1,len,sr);
+    const d=buf.getChannelData(0);
+    for(let i=0;i<len;i++)d[i]=Math.random()*2-1;
+    const src=audioCtx.createBufferSource();src.buffer=buf;
+    const flt=audioCtx.createBiquadFilter();flt.type='bandpass';flt.frequency.value=filtFreq;flt.Q.value=Q;
+    const g=audioCtx.createGain();
+    g.gain.setValueAtTime(vol,audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+Math.max(0.01,dur));
+    src.connect(flt);flt.connect(g);g.connect(audioCtx.destination);src.start();
+  }catch(e){}
+}
+function soundBuildComplete(){
+  // Ascending major chord: C5, E5, G5, C6
+  [[523,0],[659,0.07],[784,0.14],[1047,0.21]].forEach(([f,d])=>_tone(f,'triangle',0.65,0.07,d));
+}
+function soundHammer(){
+  // Short metallic tap
+  _noise(0.05,0.038,650,2.2);
+  _tone(190,'sine',0.03,0.022);
+}
+function soundHit(){
+  // Impact thud
+  _noise(0.06,0.05,350,1.1);
+  _tone(120,'sine',0.04,0.03);
+}
+function soundRaidAlarm(){
+  // Urgent horn triplet
+  [0,0.38,0.76].forEach(d=>{
+    _tone(220,'sawtooth',0.3,0.11,d);
+    _tone(330,'sawtooth',0.3,0.055,d);
+  });
+}
+function soundColonistDie(){
+  // Sad descending sine
+  [[370,0],[270,0.13],[170,0.27]].forEach(([f,d])=>_tone(f,'sine',0.13,0.05,d));
+}
+function startAmbient(){
+  if(!audioCtx||_ambientStarted)return;
+  _ambientStarted=true;
+  try{
+    const sr=audioCtx.sampleRate,len=sr*4;
+    const buf=audioCtx.createBuffer(1,len,sr);
+    const d=buf.getChannelData(0);
+    for(let i=0;i<len;i++)d[i]=Math.random()*2-1;
+    const src=audioCtx.createBufferSource();src.buffer=buf;src.loop=true;
+    const flt=audioCtx.createBiquadFilter();flt.type='lowpass';flt.frequency.value=280;
+    const g=audioCtx.createGain();g.gain.value=0.011;
+    src.connect(flt);flt.connect(g);g.connect(audioCtx.destination);src.start();
+  }catch(e){}
+}
+
 // ── Boot ──────────────────────────────────────────────────────────────────────
 function init(){
   generateMap();
   initThree();
   initInput();
   initFloats();
+  initAudio();
   updateResourceUI();
   log('Colony founded. Build a house to attract settlers.');
   // Spawn initial colonist
