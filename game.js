@@ -13,6 +13,7 @@ const BUILDINGS = {
   woodcutter: { name:'Woodcutter', icon:'🪓', cost:{wood:3},          produces:'wood',  rate:0.04, size:1, maxHp:60 },
   quarry:     { name:'Quarry',     icon:'⛏',  cost:{wood:5},          produces:'stone', rate:0.03, size:1, maxHp:80 },
   storehouse: { name:'Storehouse', icon:'📦', cost:{wood:6,stone:4},  storage:200,      size:1, maxHp:80 },
+  market:     { name:'Market',     icon:'🏪', cost:{wood:8,stone:4},  size:1, maxHp:90 },
   wall:       { name:'Wall',       icon:'🧱', cost:{stone:2},          isBarrier:true,   size:1, maxHp:300 },
   tower:      { name:'Tower',      icon:'🗼', cost:{wood:4,stone:8},  attackRange:5, attackDamage:12, attackRate:80, size:1, maxHp:150 },
   barracks:   { name:'Barracks',   icon:'⚔',  cost:{wood:6,stone:4},                    size:1, maxHp:120 },
@@ -127,6 +128,7 @@ let state = {
   timeOfDay:0,
   _harshWinter:0,
   techs:[],
+  tradeRoute:null, // { give:'wood'|'stone'|'food', receive:'wood'|'stone'|'food', timer:0 }
 };
 
 // ============================================================
@@ -223,26 +225,50 @@ function addFloat(wx,wz,text,color) {
   state.floats.push({wx,wz,wy:1.5,text,life:70,maxLife:70,color:color||'#fff'});
 }
 
+// Raider type definitions
+const RAIDER_TYPES={
+  scout: { hp:18, speed:1.15, dmgColonist:7,  dmgBuilding:8,  atkCd:45, label:'Scout'  },
+  warrior:{ hp:35, speed:0.70, dmgColonist:10, dmgBuilding:15, atkCd:60, label:'Warrior' },
+  brute:  { hp:80, speed:0.45, dmgColonist:18, dmgBuilding:30, atkCd:90, label:'Brute'  },
+};
 function spawnRaid() {
-  const size=1+Math.floor(state.day/15);
-  log(`⚔ Raiders approaching! (${size} attackers)`);
-  soundRaidAlarm();
+  const day=state.day;
+  // Raid size grows with colony age, slower early on
+  const size=1+Math.floor(day/12);
+  // Type composition: scouts early, warriors/brutes later
+  const bruteChance=Math.min(0.35,day/200);
+  const warriorChance=Math.min(0.6,0.2+day/80);
+  const types=['scout','warrior','brute'];
+  const counts={scout:0,warrior:0,brute:0};
+  const raidersOut=[];
   for(let i=0;i<size;i++){
+    let type;
+    const r2=Math.random();
+    if(r2<bruteChance)type='brute';
+    else if(r2<bruteChance+warriorChance)type='warrior';
+    else type='scout';
+    counts[type]++;
     const edge=Math.floor(Math.random()*4);
-    let r,c;
-    if(edge===0){r=0;c=Math.floor(Math.random()*COLS);}
-    else if(edge===1){r=ROWS-1;c=Math.floor(Math.random()*COLS);}
-    else if(edge===2){r=Math.floor(Math.random()*ROWS);c=0;}
-    else{r=Math.floor(Math.random()*ROWS);c=COLS-1;}
-    state.raiders.push({
+    let row,col;
+    if(edge===0){row=0;col=Math.floor(Math.random()*COLS);}
+    else if(edge===1){row=ROWS-1;col=Math.floor(Math.random()*COLS);}
+    else if(edge===2){row=Math.floor(Math.random()*ROWS);col=0;}
+    else{row=Math.floor(Math.random()*ROWS);col=COLS-1;}
+    const def=RAIDER_TYPES[type];
+    const hpBonus=Math.floor(day/8)*3;
+    raidersOut.push({
       id:Date.now()+i,
-      x:c*TILE+TILE/2, y:r*TILE+TILE/2,
-      hp:30+Math.floor(state.day/5)*5,
-      maxHp:30+Math.floor(state.day/5)*5,
+      x:col*TILE+TILE/2, y:row*TILE+TILE/2,
+      hp:def.hp+hpBonus, maxHp:def.hp+hpBonus,
+      rType:type,
       attackCooldown:0, blinkTimer:Math.floor(Math.random()*60),
       path:[],pathGoal:null,pathCooldown:0,_wallTarget:null,
     });
   }
+  state.raiders.push(...raidersOut);
+  const parts=types.filter(t=>counts[t]>0).map(t=>`${counts[t]} ${RAIDER_TYPES[t].label}${counts[t]>1?'s':''}`);
+  log(`⚔ Raiders! ${parts.join(', ')} — Day ${day}`);
+  soundRaidAlarm();
 }
 
 function updateRaiders() {
@@ -263,6 +289,8 @@ function updateRaiders() {
       if(d<nd){nd=d;nx=bx;ny=by;nc=null;nb=b;}
     });
     if(nx===null)return;
+    const rDef=RAIDER_TYPES[raider.rType]||RAIDER_TYPES.warrior;
+    const rSpeed=rDef.speed;
     const attackRange=TILE*0.9;
     if(nd>attackRange){
       const goalR=Math.max(0,Math.min(ROWS-1,Math.floor(ny/TILE)));
@@ -297,11 +325,11 @@ function updateRaiders() {
         const wbx=(raider._wallTarget.c+0.5)*TILE,wby=(raider._wallTarget.r+0.5)*TILE;
         const dx=wbx-raider.x,dy=wby-raider.y,dist=Math.sqrt(dx*dx+dy*dy);
         if(dist>attackRange){
-          raider.x+=(dx/dist)*0.7;raider.y+=(dy/dist)*0.7;
+          raider.x+=(dx/dist)*rSpeed;raider.y+=(dy/dist)*rSpeed;
         } else {
-          raider.attackCooldown=60;
-          raider._wallTarget.hp-=15;
-          addFloat(wbx/TILE,wby/TILE,'-15','#ff6644');
+          raider.attackCooldown=rDef.atkCd;
+          raider._wallTarget.hp-=rDef.dmgBuilding;
+          addFloat(wbx/TILE,wby/TILE,`-${rDef.dmgBuilding}`,'#ff6644');
           soundHit();
           if(raider._wallTarget.hp<=0){
             log('⚠ Wall section breached!');
@@ -315,19 +343,19 @@ function updateRaiders() {
         const tx=(next.c+0.5)*TILE,ty=(next.r+0.5)*TILE;
         const dx=tx-raider.x,dy=ty-raider.y,dist=Math.sqrt(dx*dx+dy*dy);
         if(dist<3)raider.path.shift();
-        else{raider.x+=(dx/dist)*0.7;raider.y+=(dy/dist)*0.7;}
+        else{raider.x+=(dx/dist)*rSpeed;raider.y+=(dy/dist)*rSpeed;}
       // Mode 3: direct movement (no walls in the way)
       } else {
         const dx=nx-raider.x,dy=ny-raider.y,dist=Math.sqrt(dx*dx+dy*dy);
-        if(dist>0.1){raider.x+=(dx/dist)*0.7;raider.y+=(dy/dist)*0.7;}
+        if(dist>0.1){raider.x+=(dx/dist)*rSpeed;raider.y+=(dy/dist)*rSpeed;}
       }
     } else {
-      raider.attackCooldown=60;
+      raider.attackCooldown=rDef.atkCd;
       if(nc){
-        nc.hp-=10;addFloat(nc.x/TILE,nc.y/TILE,'-10','#ff4444');soundHit();
+        nc.hp-=rDef.dmgColonist;addFloat(nc.x/TILE,nc.y/TILE,`-${rDef.dmgColonist}`,'#ff4444');soundHit();
         if(nc.hp<=0)killColonist(nc.id);
       } else if(nb){
-        nb.hp-=15;addFloat(nx/TILE,ny/TILE,'-15','#ff6644');soundHit();
+        nb.hp-=rDef.dmgBuilding;addFloat(nx/TILE,ny/TILE,`-${rDef.dmgBuilding}`,'#ff6644');soundHit();
         if(nb.hp<=0){log(`⚠ ${BUILDINGS[nb.type].name} destroyed!`);nb.hp=0;rebuildBuildingMesh(nb.id);}
       }
     }
@@ -626,6 +654,20 @@ function tick(){
     }
   });
   if(t%600===0)regrowTiles();
+  // Trade caravan logic
+  if(state.tradeRoute){
+    const tr=state.tradeRoute;
+    tr.timer--;
+    if(tr.timer<=0){
+      // Caravan returns with goods
+      const receiveAmt=tr.receiveAmt||30;
+      state.resources[tr.receive]=(state.resources[tr.receive]||0)+receiveAmt;
+      addFloat(COLS/2,ROWS/2,`+${receiveAmt} ${tr.receive}`,'#ffd040');
+      log(`🏪 Caravan returned: +${receiveAmt} ${tr.receive}`);
+      state.tradeRoute=null;
+      updateResourceUI();
+    }
+  }
   // Smoke particles (3D world units)
   if(t%8===0){
     state.buildings.forEach(b=>{
@@ -1360,6 +1402,31 @@ function assembleBuildingGeo(b,g){
       // Red banner
       bx(g,0.032,0.44,0.032,0x8a5020,0.38,0.56,-0.38);bx(g,0.24,0.16,0.032,0xc02020,0.50,0.70,-0.38);
       break;}
+    case'market':{
+      // Stone foundation
+      bx(g,0.94,0.14,0.94,0x9a8870,0,0.07,0);
+      // Cream/ochre walls with open-fronted stall look
+      bx(g,0.88,0.52,0.88,0xe8d498,0,0.41,0);
+      // Dark timber framing
+      [[-0.43,0.43],[0.43,0.43],[0.43,-0.43],[-0.43,-0.43]].forEach(([px,pz])=>bx(g,0.055,0.56,0.055,0x3a1808,px,0.42,pz));
+      bx(g,0.9,0.040,0.040,0x3a1808,0,0.36,0.44);bx(g,0.9,0.040,0.040,0x3a1808,0,0.36,-0.44);
+      // Open front stall: counter top
+      bx(g,0.72,0.06,0.20,0xc09040,0,0.68,0.36);
+      // Goods on counter — colourful boxes
+      bx(g,0.10,0.08,0.08,0xe06020,  0.20,0.74,0.34);
+      bx(g,0.10,0.10,0.08,0x40b060, -0.10,0.75,0.34);
+      bx(g,0.10,0.07,0.08,0x4070e0,  0.00,0.73,0.34);
+      // Warm orange gabled roof (market stall canopy feel)
+      gableRoof(g,0.96,0.96,0.38,0xd07820,0.65);
+      // Hanging sign
+      bx(g,0.032,0.14,0.032,0x5a3010,-0.02,0.82,0.46);
+      bx(g,0.24,0.14,0.040,0xf0c840,-0.02,0.74,0.50);
+      // Colourful pennant flags
+      [[-0.38,0.46],[0.38,0.46]].forEach(([px,pz])=>{
+        bx(g,0.032,0.44,0.032,0x5a3010,px,0.92,pz);
+        bx(g,0.13,0.12,0.032,px<0?0xe04040:0x40a0e0,px+(px<0?0.065:-0.065),1.08,pz);
+      });
+      break;}
   }
   if(b.hp<=0){const ov=new THREE.Mesh(new THREE.BoxGeometry(sz*0.9,0.3,sz*0.9),mat(0x332211,{transparent:true,opacity:0.85}));ov.position.y=0.2;g.add(ov);}
 }
@@ -1498,10 +1565,17 @@ function createColonistMesh(c){
 }
 function createRaiderMesh(r){
   const g=new THREE.Group();
-  // All toon materials — dark, threatening colour scheme
-  const armorM=sMat(0x4a2828);const darkM=sMat(0x2a1010);
-  const metalM=sMat(0x6068a0);const skinM2=sMat(0x7a4a38);
-  const woodM2=sMat(0x6a3810);const redM=sMat(0xc02020);
+  const rType=r.rType||'warrior';
+  // Type-specific colour scheme
+  const armorCol=rType==='scout'?0x3a3a1a:rType==='brute'?0x3a1a1a:0x4a2828;
+  const metalCol=rType==='scout'?0x7a8830:rType==='brute'?0x904040:0x6068a0;
+  const eyeCol  =rType==='scout'?0xffee20:rType==='brute'?0xff0000:0xff3020;
+  const armorM=sMat(armorCol);const darkM=sMat(0x1a1010);
+  const metalM=sMat(metalCol);const skinM2=sMat(0x7a4a38);
+  const woodM2=sMat(0x5a3008);const redM=sMat(rType==='brute'?0x901010:0xc02020);
+  // Scale: scouts are slimmer, brutes are wider/taller
+  const sc=rType==='scout'?0.82:rType==='brute'?1.28:1.0;
+  g.scale.setScalar(sc);
   // Boots
   [[-0.08,0.07],[0.08,0.07]].forEach(([x,y])=>{
     const boot=new THREE.Mesh(new THREE.BoxGeometry(0.10,0.09,0.14),darkM);boot.position.set(x,y,0.02);g.add(boot);
@@ -1510,34 +1584,63 @@ function createRaiderMesh(r){
   [[-0.08,0.2],[0.08,0.2]].forEach(([x,y])=>{
     const leg=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.06,0.2,6),armorM);leg.position.set(x,y,0);g.add(leg);
   });
-  // Armored torso — slightly wider for menace
+  // Armored torso
   const torso=new THREE.Mesh(new THREE.BoxGeometry(0.30,0.26,0.17),armorM);torso.position.y=0.43;g.add(torso);
-  // Chest plate stripe
   bx(g,0.32,0.28,0.04,0x383040,0,0.43,0.09);
-  // Shoulder pads
+  // Shoulder pads (brute has bigger spiky ones)
+  const padR=rType==='brute'?0.10:0.07;
   [[-0.20,0.52],[0.20,0.52]].forEach(([x,y])=>{
-    const pad=new THREE.Mesh(new THREE.SphereGeometry(0.07,7,5),metalM);pad.position.set(x,y,0);g.add(pad);
+    const pad=new THREE.Mesh(new THREE.SphereGeometry(padR,7,5),metalM);pad.position.set(x,y,0);g.add(pad);
+    if(rType==='brute'){const sp=new THREE.Mesh(new THREE.ConeGeometry(0.03,0.10,5),metalM);sp.position.set(x,y+0.08,0);g.add(sp);}
   });
   // Arms
   [[-0.19,0.37],[0.19,0.37]].forEach(([x,y])=>{
     const arm=new THREE.Mesh(new THREE.CylinderGeometry(0.044,0.050,0.23,6),armorM);arm.position.set(x,y,0);g.add(arm);
   });
-  // Head (bigger — anime proportions)
+  // Head
   const rhead=new THREE.Mesh(new THREE.SphereGeometry(0.145,9,7),skinM2);rhead.position.y=0.66;g.add(rhead);
-  // Menacing full helmet
-  const helm=new THREE.Mesh(new THREE.SphereGeometry(0.162,9,7,0,Math.PI*2,0,Math.PI*0.65),metalM);helm.position.y=0.69;g.add(helm);
-  const helmBrim=new THREE.Mesh(new THREE.CylinderGeometry(0.18,0.17,0.03,10),metalM);helmBrim.position.y=0.63;g.add(helmBrim);
-  const helmSpike=new THREE.Mesh(new THREE.ConeGeometry(0.032,0.17,6),metalM);helmSpike.position.y=0.85;g.add(helmSpike);
-  // Eye slits — eerie glow colour
-  bx(g,0.10,0.04,0.02,0xff3020,0,0.72,0.15);
-  // Weapon — battle axe handle + head
-  const wHandle=new THREE.Mesh(new THREE.CylinderGeometry(0.019,0.019,0.38,5),woodM2);
-  wHandle.rotation.z=0.52;wHandle.position.set(0.27,0.46,0);g.add(wHandle);
-  const wHead=new THREE.Mesh(new THREE.DodecahedronGeometry(0.07,0),metalM);wHead.position.set(0.37,0.58,0);g.add(wHead);
-  // Shield
-  const shield=new THREE.Mesh(new THREE.BoxGeometry(0.05,0.22,0.19),redM);shield.position.set(-0.23,0.40,0);g.add(shield);
-  const shieldBoss=new THREE.Mesh(new THREE.SphereGeometry(0.04,6,4),metalM);shieldBoss.position.set(-0.26,0.40,0);g.add(shieldBoss);
-  // Red tunic stripe below armour
+  // Helmet — scout has a hood (flat cap), warrior has a spiked helm, brute has a horned helm
+  if(rType==='scout'){
+    const hood=new THREE.Mesh(new THREE.SphereGeometry(0.155,8,6,0,Math.PI*2,0,Math.PI*0.55),metalM);hood.position.y=0.70;g.add(hood);
+    const brim=new THREE.Mesh(new THREE.CylinderGeometry(0.17,0.16,0.025,9),metalM);brim.position.y=0.64;g.add(brim);
+  } else if(rType==='brute'){
+    const helm=new THREE.Mesh(new THREE.SphereGeometry(0.168,9,7,0,Math.PI*2,0,Math.PI*0.68),metalM);helm.position.y=0.69;g.add(helm);
+    const helmBrim=new THREE.Mesh(new THREE.CylinderGeometry(0.20,0.19,0.035,10),metalM);helmBrim.position.y=0.62;g.add(helmBrim);
+    // Horns
+    [[-0.10,0.86,0.0],[0.10,0.86,0.0]].forEach(([hx,hy,hz])=>{
+      const horn=new THREE.Mesh(new THREE.ConeGeometry(0.028,0.14,6),metalM);horn.position.set(hx,hy,hz);horn.rotation.z=(hx<0?-1:1)*0.35;g.add(horn);
+    });
+  } else {
+    const helm=new THREE.Mesh(new THREE.SphereGeometry(0.162,9,7,0,Math.PI*2,0,Math.PI*0.65),metalM);helm.position.y=0.69;g.add(helm);
+    const helmBrim=new THREE.Mesh(new THREE.CylinderGeometry(0.18,0.17,0.03,10),metalM);helmBrim.position.y=0.63;g.add(helmBrim);
+    const helmSpike=new THREE.Mesh(new THREE.ConeGeometry(0.032,0.17,6),metalM);helmSpike.position.y=0.85;g.add(helmSpike);
+  }
+  // Eye slits
+  bx(g,0.10,0.04,0.02,eyeCol,0,0.72,0.15);
+  // Type-specific weapon
+  if(rType==='scout'){
+    // Twin daggers — angled at hip
+    [0.24,-0.22].forEach((x,i)=>{
+      const dh=new THREE.Mesh(new THREE.CylinderGeometry(0.012,0.012,0.22,5),woodM2);
+      dh.rotation.z=(i===0?0.6:-0.6);dh.position.set(x,0.43,0.06);g.add(dh);
+      const db=new THREE.Mesh(new THREE.BoxGeometry(0.018,0.14,0.018),metalM);
+      db.position.set(x+(i===0?0.07:-0.07),0.50,0.06);g.add(db);
+    });
+  } else if(rType==='brute'){
+    // Two-handed maul: thick handle + big cube head
+    const wh=new THREE.Mesh(new THREE.CylinderGeometry(0.025,0.025,0.46,6),woodM2);
+    wh.rotation.z=0.45;wh.position.set(0.30,0.42,0);g.add(wh);
+    const whead=new THREE.Mesh(new THREE.BoxGeometry(0.16,0.12,0.12),metalM);
+    whead.position.set(0.43,0.58,0);g.add(whead);
+  } else {
+    // Warrior — battle axe + shield
+    const wHandle=new THREE.Mesh(new THREE.CylinderGeometry(0.019,0.019,0.38,5),woodM2);
+    wHandle.rotation.z=0.52;wHandle.position.set(0.27,0.46,0);g.add(wHandle);
+    const wHead=new THREE.Mesh(new THREE.DodecahedronGeometry(0.07,0),metalM);wHead.position.set(0.37,0.58,0);g.add(wHead);
+    const shield=new THREE.Mesh(new THREE.BoxGeometry(0.05,0.22,0.19),redM);shield.position.set(-0.23,0.40,0);g.add(shield);
+    const shieldBoss=new THREE.Mesh(new THREE.SphereGeometry(0.04,6,4),metalM);shieldBoss.position.set(-0.26,0.40,0);g.add(shieldBoss);
+  }
+  // Tunic stripe
   bx(g,0.28,0.10,0.18,0x881818,0,0.30,0);
 
   g.position.set(r.x/TILE,0,r.y/TILE);
@@ -1954,9 +2057,41 @@ function showTileInfo(r,c){
       html+=`<br><span style="color:#60b080;font-size:10px">Assign worker to repair</span>`;
     }
     html+=`<br>Workers: ${bld.workers}`;
+    if(bld.type==='market'&&bld.active&&bld.hp>0){
+      if(state.tradeRoute)html+=`<br><span style="color:#ffd040">🏪 Caravan en route… ${state.tradeRoute.timer} ticks left</span>`;
+      else html+=`<br><span style="color:#80d080">Press T to open trade</span>`;
+    }
     if(bld.active!==undefined&&!bld.constructing)html+=`<br>Active: ${bld.active?'Yes':'No'}`;
   }
   ic.innerHTML=html;
+}
+
+// ── Trade ─────────────────────────────────────────────────────────────────────
+// Trade rates: give 20 of one resource, receive 30 of another after 600 ticks (~2 min)
+const TRADE_ROUTES=[
+  {give:'wood',  receive:'food',  giveCost:20, receiveAmt:35, label:'20 wood → 35 food'},
+  {give:'wood',  receive:'stone', giveCost:20, receiveAmt:25, label:'20 wood → 25 stone'},
+  {give:'stone', receive:'wood',  giveCost:15, receiveAmt:25, label:'15 stone → 25 wood'},
+  {give:'stone', receive:'food',  giveCost:15, receiveAmt:30, label:'15 stone → 30 food'},
+  {give:'food',  receive:'wood',  giveCost:25, receiveAmt:30, label:'25 food → 30 wood'},
+  {give:'food',  receive:'stone', giveCost:25, receiveAmt:20, label:'25 food → 20 stone'},
+];
+function openTradeModal(){
+  const hasMarket=state.buildings.some(b=>b.type==='market'&&b.active&&b.hp>0);
+  if(!hasMarket){log('Build a Market to trade resources.');return;}
+  if(state.tradeRoute){log(`🏪 Caravan in transit… returns in ${state.tradeRoute.timer} ticks.`);return;}
+  // Show trade modal in event-modal
+  const choices=TRADE_ROUTES.map(tr=>({
+    label:tr.label,
+    fn:s=>{
+      if((s.resources[tr.give]||0)<tr.giveCost)return `Not enough ${tr.give}! Need ${tr.giveCost}.`;
+      s.resources[tr.give]-=tr.giveCost;
+      s.tradeRoute={give:tr.give,receive:tr.receive,giveCost:tr.giveCost,receiveAmt:tr.receiveAmt,timer:600};
+      updateResourceUI();
+      return `Caravan sent! Returns with ${tr.receiveAmt} ${tr.receive} in ~2 min.`;
+    }
+  }));
+  showEvent({title:'🏪 Market Trade',body:'Send a caravan with your surplus resources. Returns in ~2 minutes.',color:'#ffd040',choices});
 }
 
 // ── Save / Load ───────────────────────────────────────────────────────────────
@@ -2114,6 +2249,7 @@ function initInput(){
   document.addEventListener('keydown',e=>{
     if(e.key==='s'||e.key==='S')saveGame();
     if(e.key==='l'||e.key==='L')loadGame();
+    if(e.key==='t'||e.key==='T')openTradeModal();
     if(e.key==='Escape'){setPlacing(null);state.selectedColonist=null;}
     if(e.key==='r'||e.key==='R'){
       const m=document.getElementById('tech-modal');
@@ -2134,6 +2270,7 @@ function initInput(){
 
   document.getElementById('btn-save').addEventListener('click',saveGame);
   document.getElementById('btn-load').addEventListener('click',loadGame);
+  document.getElementById('btn-trade').addEventListener('click',openTradeModal);
 
 }
 
